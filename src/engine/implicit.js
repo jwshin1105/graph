@@ -62,6 +62,10 @@ export function traceImplicit(f, view, opts = {}) {
   const points = [];
   const cellDiag = Math.hypot(hx, hy);
 
+  // 셀마다 |f| 의 최솟값을 기록해 둔다 — 뒤에서 "국소 최소 셀"을 골라내는 데 쓴다.
+  const cellMin = new Float64Array(nx * ny).fill(Infinity);
+  const produced = new Uint8Array(nx * ny);
+
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
       const v = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
@@ -72,25 +76,45 @@ export function traceImplicit(f, view, opts = {}) {
         if (t > 0) pos++; else if (t < 0) neg++; else { pos++; neg++; }
         minAbs = Math.min(minAbs, Math.abs(t));
       }
+      cellMin[j * nx + i] = minAbs;
       const crosses = pos > 0 && neg > 0;
 
-      // 기울기 추정으로 "부호는 안 바뀌지만 해가 있을 수 있는" 셀을 골라낸다
       const gx = (v[1] - v[0]) / hx;
       const gy = (v[3] - v[0]) / hy;
       const gradMag = Math.hypot(gx, gy);
-      const nearZero = isFinite(minAbs) && minAbs <= Math.max(gradMag * cellDiag * 1.2, 0);
+      const nearZero = isFinite(minAbs) && minAbs <= gradMag * cellDiag * 1.2;
 
       if (!crosses && !nearZero && !nan) continue;
-
-      const x0 = xmin + i * hx;
-      const y0 = ymin + j * hy;
       const before = segments.length;
-      marchCell(F, x0, y0, hx, hy, refine, segments);
+      marchCell(F, xmin + i * hx, ymin + j * hy, hx, hy, refine, segments);
+      if (segments.length > before) produced[j * nx + i] = 1;
+    }
+  }
 
-      // 곡선 조각이 하나도 안 나왔는데 |f| 가 유난히 작다면 고립해 후보
-      const degenerate = isFinite(minAbs) && minAbs <= gradMag * cellDiag * 0.7;
-      if (findIsolated && segments.length === before && degenerate && !nan) {
-        const p = findIsolatedZero(F, x0, y0, hx, hy);
+  // ── 고립해(점열) 탐색 ────────────────────────────────────
+  // |f| 가 격자 위에서 국소 최소가 되는 셀만 골라 Nelder–Mead 로 파고든다.
+  // 셀이 영점을 정확히 가운데 품으면 유한차분 기울기가 0 이 되어 버리므로,
+  // 기울기 기준만으로는 이런 해를 놓친다. 국소 최소 판정이 그 빈틈을 메운다.
+  if (findIsolated) {
+    const finite = Array.from(cellMin).filter((v) => isFinite(v)).sort((a, b) => a - b);
+    const median = finite.length ? finite[finite.length >> 1] : 0;
+    const thr = median * 0.5;
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i;
+        const m = cellMin[k];
+        if (produced[k] || !isFinite(m) || !(m <= thr)) continue;
+        let isMin = true;
+        for (let dj = -1; dj <= 1 && isMin; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            if (!di && !dj) continue;
+            const a = i + di, b = j + dj;
+            if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
+            if (cellMin[b * nx + a] < m) { isMin = false; break; }
+          }
+        }
+        if (!isMin) continue;
+        const p = findIsolatedZero(F, xmin + i * hx, ymin + j * hy, hx, hy);
         if (p) points.push(p);
       }
     }
@@ -98,7 +122,9 @@ export function traceImplicit(f, view, opts = {}) {
 
   const tol = (Math.max(hx, hy) / refine) * 1.5;
   const polylines = stitch(segments, tol);
-  const isolated = dropOnCurve(dedupe(points, Math.max(hx, hy) * 0.02), polylines, cellDiag * 0.5);
+  const snap = (v) => (Math.abs(v) < cellDiag * 1e-9 ? 0 : v);
+  const isolated = dropOnCurve(dedupe(points, Math.max(hx, hy) * 0.02), polylines, cellDiag * 0.5)
+    .map(([x, y]) => [snap(x), snap(y)]);
   return { polylines, points: isolated, evals };
 }
 
@@ -139,7 +165,10 @@ function marchCell(F, x0, y0, hx, hy, k, out) {
 }
 
 function pushSeg(out, p, q) {
-  if (p && q) out.push([p[0], p[1], q[0], q[1]]);
+  if (!p || !q) return;
+  // 격자점 위에 해가 정확히 놓이면 길이 0 짜리 조각이 생긴다 — 버린다
+  if (p[0] === q[0] && p[1] === q[1]) return;
+  out.push([p[0], p[1], q[0], q[1]]);
 }
 
 /**
@@ -290,8 +319,39 @@ export function stitch(segments, tol) {
         else line.unshift(pickPt[0], pickPt[1]);
       }
     }
-    out.push(line);
+    if (line.length >= 4) out.push(line);
   }
+  // 마무리: 끝점이 맞닿은 폴리라인끼리 한 번 더 이어 붙인다
+  return mergeChains(out, tol * 2);
+}
+
+function mergeChains(lines, tol) {
+  const res = lines.slice();
+  for (let i = 0; i < res.length; i++) {
+    if (!res[i]) continue;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const a = res[i];
+      const ax = a[0], ay = a[1], bx = a[a.length - 2], by = a[a.length - 1];
+      if (Math.hypot(ax - bx, ay - by) < tol) break;      // 이미 닫힌 곡선
+      for (let j = 0; j < res.length; j++) {
+        if (i === j || !res[j]) continue;
+        const b = res[j];
+        const cx = b[0], cy = b[1], dx = b[b.length - 2], dy = b[b.length - 1];
+        if (Math.hypot(bx - cx, by - cy) < tol) { res[i] = a.concat(b.slice(2)); res[j] = null; changed = true; break; }
+        if (Math.hypot(bx - dx, by - dy) < tol) { res[i] = a.concat(reverseLine(b).slice(2)); res[j] = null; changed = true; break; }
+        if (Math.hypot(ax - dx, ay - dy) < tol) { res[i] = b.concat(a.slice(2)); res[j] = null; changed = true; break; }
+        if (Math.hypot(ax - cx, ay - cy) < tol) { res[i] = reverseLine(b).concat(a.slice(2)); res[j] = null; changed = true; break; }
+      }
+    }
+  }
+  return res.filter(Boolean);
+}
+
+function reverseLine(l) {
+  const out = [];
+  for (let i = l.length - 2; i >= 0; i -= 2) out.push(l[i], l[i + 1]);
   return out;
 }
 

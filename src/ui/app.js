@@ -1,0 +1,483 @@
+// 앱 컨트롤러: 입력 목록 · 캔버스 · 분석 패널을 잇는다.
+
+import { View } from './view.js';
+import { Renderer, PALETTE } from './renderer.js';
+import { createContext, createObject, computeObject, analyzeObject } from './objects.js';
+import { pretty, trimNum } from '../math/numeric.js';
+
+const EXAMPLES = [
+  ['sin(x)^2 + sin(y)^2 = 0', '해가 곡선이 아니라 격자 점열 — 등고선법이 놓치는 해'],
+  ['x^2 + y^2 = 0', '한 점만이 해인 방정식'],
+  ['y^2 = x^2(x-1)', '곡선 + 원점의 고립해'],
+  ['sin x = 0', '해가 등차수열 xₙ = nπ 임을 자동으로 찾아냄'],
+  ['x^2+y^2=4 and y=x^2-1', '연립방정식의 해를 점열로'],
+  ['a_1=1; a_n=2a_{n-1}+1', '점화식 → 일반항 2ⁿ−1 복원'],
+  ['[1,1,2,3,5,8,13,21]', '피보나치 판별 + 비네 공식'],
+  ['{(1,3),(2,5),(3,7),(4,9)}', '점열에서 규칙 추출'],
+  ['y = x^3 - 3x', '극값·변곡점·근을 한 번에'],
+  ['(x^2+1)/x', '수직·사선 점근선 자동 검출'],
+  ['x^2/9 + y^2/4 = 1', '이차곡선 자동 판별'],
+  ['r = 1 + cos(θ)', '극좌표 곡선(심장형)'],
+  ['(cos t, sin 2t)', '매개변수 곡선(리사주)'],
+  ['y < x^2 - 2', '부등식 영역'],
+  ['|x| + |y| = 2', '절댓값 방정식'],
+  ['tan x = x', '초월방정식의 근을 점열로'],
+];
+
+const START = ['sin(x)^2 + sin(y)^2 = 0', 'y = x^3 - 3x'];
+
+class App {
+  constructor() {
+    this.canvas = document.getElementById('board');
+    this.view = new View();
+    this.renderer = new Renderer(this.canvas, this.view);
+    this.ctx = createContext();
+    this.objects = [];
+    this.nextId = 1;
+    this.colorSeq = 0;
+    this.selected = null;
+    this.hover = null;
+    this.needsCompute = true;
+    this.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+
+    this.applyTheme();
+    this.bind();
+    this.renderer.resize();
+    this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
+    START.forEach((s) => this.addObject(s));
+    this.renderInputs();
+    this.buildExamples();
+    this.schedule();
+  }
+
+  // ── 상태 ────────────────────────────────
+  addObject(source = '') {
+    const obj = createObject(source, this.ctx, this.nextId++, this.colorSeq);
+    obj.color = PALETTE[this.colorSeq % PALETTE.length];
+    this.colorSeq++;
+    this.objects.push(obj);
+    this.needsCompute = true;
+    return obj;
+  }
+
+  updateObject(obj, source) {
+    const idx = this.objects.indexOf(obj);
+    if (obj.defName) { this.ctx.defs.delete(obj.defName); this.ctx.seqs.delete(obj.defName); }
+    if (obj.name) this.ctx.seqs.delete(obj.name);
+    const next = createObject(source, this.ctx, obj.id, obj.colorIndex);
+    next.color = obj.color;
+    next.visible = obj.visible;
+    this.objects[idx] = next;
+    if (this.selected === obj) this.selected = next;
+    this.needsCompute = true;
+    return next;
+  }
+
+  removeObject(obj) {
+    if (obj.defName) this.ctx.defs.delete(obj.defName);
+    if (obj.name) this.ctx.seqs.delete(obj.name);
+    this.objects = this.objects.filter((o) => o !== obj);
+    if (this.selected === obj) this.selected = null;
+    this.needsCompute = true;
+    this.renderInputs();
+    this.schedule();
+  }
+
+  // ── 계산 · 그리기 ────────────────────────
+  compute() {
+    const b = this.view.bounds();
+    const t0 = performance.now();
+    let pts = 0;
+    for (const o of this.objects) {
+      if (!o.visible || o.error) { o.data = null; continue; }
+      try {
+        o.data = computeObject(o, b);
+        pts += (o.data.points || []).length;
+      } catch (e) {
+        o.data = null;
+        o.runtimeError = e.message;
+      }
+    }
+    this.needsCompute = false;
+    this.lastCost = performance.now() - t0;
+    this.lastPoints = pts;
+  }
+
+  draw() {
+    const r = this.renderer;
+    const b = this.view.bounds();
+    r.clear();
+    r.drawGrid();
+
+    for (const o of this.objects) {
+      if (!o.visible || !o.data) continue;
+      const d = o.data;
+      if (d.mask) r.drawMask(d.mask, o.color, b);
+      if (d.polylines && d.polylines.length) {
+        r.drawPolylines(d.polylines, o.color, d.ghost ? 1.2 : 2.1, d.dash || (d.ghost ? [4, 4] : null));
+      }
+      if (d.stems && d.points) {
+        // 화면 밖으로 치솟는 항의 막대는 그리지 않는다 (세로줄만 남아 지저분해진다)
+        const stems = d.points
+          .filter(([, y]) => y >= b.ymin && y <= b.ymax)
+          .map(([x, y]) => [x, 0, x, y]);
+        r.drawPolylines(stems, o.color, 1, [2, 3]);
+      }
+      if (d.points && d.points.length) {
+        const many = d.points.length > 400;
+        r.drawPoints(d.points, o.color, many ? 2.4 : 4.6);
+        if (!many && d.points.length <= 10 && o.kind !== 'sequence') {
+          r.drawLabels(
+            d.points.map(([x, y]) => ({ x, y, text: `(${pretty(x)}, ${pretty(y)})` })),
+            o.color,
+          );
+        }
+      }
+    }
+
+    if (this.hover) {
+      r.drawCrosshair(this.hover.px, this.hover.py, this.hover.text);
+    }
+    this.updateStatus();
+  }
+
+  updateStatus() {
+    const el = document.getElementById('status');
+    const b = this.view.bounds();
+    const span = b.xmax - b.xmin;
+    el.textContent =
+      `x ∈ [${trimNum(b.xmin, 3)}, ${trimNum(b.xmax, 3)}]  ·  1칸 ≈ ${trimNum(span / 10, 3)}`
+      + (this.lastCost ? `  ·  ${this.lastCost.toFixed(0)}ms` : '')
+      + (this.lastPoints ? `  ·  점 ${this.lastPoints}개` : '');
+  }
+
+  schedule() {
+    if (this.raf) return;
+    this.raf = requestAnimationFrame(() => {
+      this.raf = null;
+      if (this.needsCompute) this.compute();
+      this.draw();
+    });
+  }
+
+  // ── UI ──────────────────────────────────
+  renderInputs() {
+    const host = document.getElementById('inputs');
+    host.innerHTML = '';
+    for (const o of this.objects) {
+      const row = document.createElement('div');
+      row.className = 'item' + (o.error ? ' err' : '');
+
+      const head = document.createElement('div');
+      head.className = 'item-head';
+
+      const sw = document.createElement('button');
+      sw.className = 'swatch';
+      sw.style.background = o.color;
+      sw.title = '보이기/숨기기';
+      sw.onclick = () => { o.visible = !o.visible; sw.style.opacity = o.visible ? 1 : .25; this.schedule(); };
+      sw.style.opacity = o.visible ? 1 : .25;
+
+      const input = document.createElement('input');
+      input.className = 'expr';
+      input.value = o.source;
+      input.placeholder = '예: x^2 + y^2 = 4';
+      input.spellcheck = false;
+      input.onchange = () => {
+        const next = this.updateObject(o, input.value);
+        this.renderInputs();
+        if (this.selected === next) this.showAnalysis(next);
+        this.schedule();
+      };
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          input.blur();
+          if (o === this.objects[this.objects.length - 1] && input.value.trim()) {
+            this.addObject('');
+            this.renderInputs();
+            const els = host.querySelectorAll('input.expr');
+            els[els.length - 1]?.focus();
+          }
+        }
+      };
+
+      const acts = document.createElement('div');
+      acts.className = 'acts';
+      const an = document.createElement('button');
+      an.className = 'iconbtn' + (this.selected === o ? ' on' : '');
+      an.textContent = '분석';
+      an.onclick = () => { this.selected = o; this.renderInputs(); this.showAnalysis(o); };
+      const del = document.createElement('button');
+      del.className = 'iconbtn';
+      del.textContent = '✕';
+      del.title = '삭제';
+      del.onclick = () => this.removeObject(o);
+      acts.append(an, del);
+
+      head.append(sw, input, acts);
+      row.append(head);
+
+      if (o.error) {
+        const em = document.createElement('div');
+        em.className = 'errmsg';
+        em.textContent = `⚠ ${o.error}`;
+        row.append(em);
+      } else if (o.source.trim()) {
+        const meta = document.createElement('div');
+        meta.className = 'item-meta';
+        meta.innerHTML = `<span class="tag">${KIND_LABEL[o.kind] || o.kind}</span>`;
+        const d = o.data;
+        if (d) {
+          if (d.polylines?.length) meta.innerHTML += `<span class="tag">곡선 ${d.polylines.length}가지</span>`;
+          if (d.isolated?.length) meta.innerHTML += `<span class="tag pt">점 ${d.isolated.length}개</span>`;
+        }
+        if (o.label && o.label !== o.source) {
+          const s = document.createElement('span');
+          s.textContent = o.label;
+          s.style.fontFamily = 'var(--mono)';
+          meta.append(s);
+        }
+        row.append(meta);
+      }
+      host.append(row);
+    }
+  }
+
+  buildExamples() {
+    const list = document.getElementById('exampleList');
+    for (const [expr, desc] of EXAMPLES) {
+      const b = document.createElement('button');
+      b.className = 'ex';
+      b.innerHTML = `<code>${escapeHtml(expr)}</code><span>${escapeHtml(desc)}</span>`;
+      b.onclick = () => {
+        const empty = this.objects.find((o) => !o.source.trim());
+        if (empty) this.updateObject(empty, expr);
+        else this.addObject(expr);
+        this.needsCompute = true;
+        this.compute();
+        // 예제 하나만 놓인 상태라면 해가 잘 보이도록 화면을 맞춰 준다
+        if (this.objects.filter((o) => o.source.trim()).length === 1) this.fitToSolutions();
+        this.renderInputs();
+        const target = this.objects.find((o) => o.source === expr);
+        if (target) { this.selected = target; this.showAnalysis(target); this.renderInputs(); }
+        this.schedule();
+      };
+      list.append(b);
+    }
+  }
+
+  showAnalysis(obj) {
+    const host = document.getElementById('analysis');
+    host.innerHTML = '';
+    if (!obj || obj.error) {
+      host.innerHTML = '<div class="an-empty">분석할 수 있는 식이 아닙니다.</div>';
+      return;
+    }
+    if (this.needsCompute) this.compute();
+    const res = analyzeObject(obj, this.view.bounds(), this.ctx);
+    if (!res) {
+      host.innerHTML = '<div class="an-empty">이 형태는 아직 분석 대상이 아닙니다.</div>';
+      return;
+    }
+    const h = document.createElement('div');
+    h.className = 'an-head';
+    h.textContent = `${res.title} — ${obj.label}`;
+    host.append(h);
+    if (res.lead || res.summary) {
+      const l = document.createElement('div');
+      l.className = 'an-lead';
+      l.textContent = res.lead || res.summary;
+      host.append(l);
+    }
+    const findings = res.findings || [];
+    if (!findings.length) {
+      host.innerHTML += '<div class="an-empty">뚜렷한 규칙을 찾지 못했습니다.<br />범위를 넓히거나 항을 더 주면 더 잘 찾습니다.</div>';
+      return;
+    }
+    for (const f of findings) {
+      const c = document.createElement('div');
+      c.className = 'card' + ((f.confidence ?? 1) < 0.85 ? ' low' : '');
+      c.innerHTML =
+        `<div class="card-t"><span>${escapeHtml(f.title)}</span>` +
+        `<span class="conf">확신도 ${Math.round((f.confidence ?? 1) * 100)}%</span></div>` +
+        (f.detail ? `<div class="card-d">${escapeHtml(f.detail)}</div>` : '') +
+        (f.formula ? `<div class="formula">${escapeHtml(f.formula)}</div>` : '') +
+        (f.extra ? `<div class="card-d">${escapeHtml(f.extra)}</div>` : '') +
+        (f.next && f.next.every((x) => typeof x === 'number' && isFinite(x))
+          ? `<div class="next">다음 항 예측 → ${f.next.map((x) => pretty(x)).join(',  ')}</div>` : '') +
+        (f.hint ? `<div class="hint">${escapeHtml(f.hint)}</div>` : '');
+      host.append(c);
+    }
+  }
+
+  applyTheme() {
+    document.documentElement.dataset.theme = this.theme;
+    this.renderer.setTheme(this.theme);
+  }
+
+  fitToSolutions() {
+    const xs = [], ys = [];
+    for (const o of this.objects) {
+      if (!o.visible || !o.data) continue;
+      for (const p of o.data.points || []) { xs.push(p[0]); ys.push(p[1]); }
+      for (const l of o.data.polylines || []) {
+        for (let i = 0; i < l.length; i += 2) { xs.push(l[i]); ys.push(l[i + 1]); }
+      }
+    }
+    if (xs.length < 2) return;
+    const pad = 0.2;
+    let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (x1 - x0 < 1e-6) { x0 -= 1; x1 += 1; }
+    if (y1 - y0 < 1e-6) { y0 -= 1; y1 += 1; }
+    this.view.fit(x0, x1, y0, y1, pad);
+    this.needsCompute = true;
+    this.schedule();
+  }
+
+  // ── 이벤트 ──────────────────────────────
+  bind() {
+    const c = this.canvas;
+    let dragging = false, lastX = 0, lastY = 0, moved = false;
+
+    c.addEventListener('pointerdown', (e) => {
+      dragging = true; moved = false;
+      lastX = e.clientX; lastY = e.clientY;
+      c.setPointerCapture(e.pointerId);
+    });
+    c.addEventListener('pointermove', (e) => {
+      const rect = c.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      if (dragging) {
+        moved = true;
+        this.view.panPx(e.clientX - lastX, e.clientY - lastY);
+        lastX = e.clientX; lastY = e.clientY;
+        this.needsCompute = true;
+        this.schedule();
+        return;
+      }
+      this.hover = this.probe(px, py);
+      this.schedule();
+    });
+    const end = () => { dragging = false; if (moved) { this.needsCompute = true; this.schedule(); } };
+    c.addEventListener('pointerup', end);
+    c.addEventListener('pointercancel', end);
+    c.addEventListener('pointerleave', () => { this.hover = null; this.schedule(); });
+
+    c.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = c.getBoundingClientRect();
+      const f = Math.pow(0.999, e.deltaY);
+      this.view.zoomAt(e.clientX - rect.left, e.clientY - rect.top, f);
+      this.needsCompute = true;
+      this.schedule();
+    }, { passive: false });
+
+    c.addEventListener('dblclick', () => {
+      this.view.cx = 0; this.view.cy = 0;
+      this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
+      this.needsCompute = true;
+      this.schedule();
+    });
+
+    window.addEventListener('resize', () => {
+      this.renderer.resize();
+      this.needsCompute = true;
+      this.schedule();
+    });
+
+    document.getElementById('addBtn').onclick = () => {
+      this.addObject('');
+      this.renderInputs();
+      const els = document.querySelectorAll('#inputs input.expr');
+      els[els.length - 1]?.focus();
+    };
+    document.getElementById('clearBtn').onclick = () => {
+      this.objects = [];
+      this.ctx = createContext();
+      this.selected = null;
+      this.addObject('');
+      this.renderInputs();
+      document.getElementById('analysis').innerHTML =
+        '<div class="an-empty">식 옆의 <b>분석</b> 버튼을 누르면<br />해집합의 규칙성을 찾아 드립니다.</div>';
+      this.needsCompute = true;
+      this.schedule();
+    };
+    document.getElementById('exampleBtn').onclick = () => {
+      const s = document.getElementById('examples');
+      s.hidden = !s.hidden;
+    };
+
+    document.getElementById('tools').addEventListener('click', (e) => {
+      const act = e.target.dataset.act;
+      if (!act) return;
+      const cx = this.view.width / 2, cy = this.view.height / 2;
+      if (act === 'zoomin') this.view.zoomAt(cx, cy, 1.4);
+      if (act === 'zoomout') this.view.zoomAt(cx, cy, 1 / 1.4);
+      if (act === 'reset') {
+        this.view.cx = 0; this.view.cy = 0;
+        this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
+      }
+      if (act === 'fit') { this.compute(); this.fitToSolutions(); }
+      if (act === 'theme') { this.theme = this.theme === 'dark' ? 'light' : 'dark'; this.applyTheme(); }
+      if (act === 'png') { this.savePng(); return; }
+      this.needsCompute = true;
+      this.schedule();
+    });
+  }
+
+  savePng() {
+    this.compute();
+    this.draw();
+    this.canvas.toBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'graph.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  }
+
+  /** 마우스 근처의 해를 찾아 좌표를 알려 준다 */
+  probe(px, py) {
+    const mx = this.view.toMathX(px);
+    const my = this.view.toMathY(py);
+    let best = null, bestD = 18;
+    for (const o of this.objects) {
+      if (!o.visible || !o.data) continue;
+      for (const p of o.data.points || []) {
+        const d = Math.hypot(this.view.toPxX(p[0]) - px, this.view.toPxY(p[1]) - py);
+        if (d < bestD) { bestD = d; best = { p, o, kind: '해' }; }
+      }
+      for (const l of o.data.polylines || []) {
+        for (let i = 0; i < l.length; i += 2) {
+          const d = Math.hypot(this.view.toPxX(l[i]) - px, this.view.toPxY(l[i + 1]) - py);
+          if (d < bestD) { bestD = d; best = { p: [l[i], l[i + 1]], o, kind: '곡선' }; }
+        }
+      }
+    }
+    if (best) {
+      return {
+        px: this.view.toPxX(best.p[0]), py: this.view.toPxY(best.p[1]),
+        text: `${best.kind} (${pretty(best.p[0])}, ${pretty(best.p[1])})`,
+      };
+    }
+    return { px, py, text: `(${trimNum(mx, 4)}, ${trimNum(my, 4)})` };
+  }
+}
+
+const KIND_LABEL = {
+  function: '함수', functionY: 'x=f(y)', implicit: '음함수', region: '영역',
+  system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
+  sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
+  constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
+};
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  window.app = new App();
+});

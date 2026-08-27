@@ -221,6 +221,17 @@ class Parser {
     return base;
   }
 
+  /** 괄호 없는 함수 호출의 인자 */
+  parseImplicitArg() {
+    let arg = this.parsePower();
+    while (this.startsFactor()) {
+      const tk = this.peek();
+      if (tk.type === 'name' && FUNCTIONS[tk.value]) break;   // 다른 함수는 인자에 넣지 않는다
+      arg = bin('*', arg, this.parsePower());
+    }
+    return arg;
+  }
+
   parsePostfix() {
     let e = this.parsePrimary();
     for (;;) {
@@ -296,9 +307,13 @@ class Parser {
         return primes ? { type: 'call', name, args, primes } : call(name, args);
       }
       if (FUNCTIONS[name]) {
-        // sin x 처럼 괄호 없는 호출 — 인자는 거듭제곱까지만 묶는다 (sin x^2 = sin(x^2))
-        const arg = this.parsePower();
-        return call(name, [arg]);
+        // sin 2t 처럼 괄호 없는 호출.
+        // 인자는 "곱해진 인수들"까지 묶되 다른 함수 이름이 나오면 거기서 끊는다.
+        //   sin 2t      → sin(2t)
+        //   sin x^2     → sin(x²)
+        //   sin x cos x → sin(x)·cos(x)
+        //   sin x + 1   → sin(x) + 1
+        return call(name, [this.parseImplicitArg()]);
       }
       return vari(name);
     }

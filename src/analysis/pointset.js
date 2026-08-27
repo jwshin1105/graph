@@ -51,8 +51,8 @@ export function analyzePointSet(points, opts = {}) {
     }
   }
 
-  // 2) 공선성
-  const line = fitLine(pts);
+  // 2) 공선성 — 점 두 개는 언제나 한 직선 위에 있으므로 셋 이상일 때만 의미가 있다
+  const line = n >= 3 ? fitLine(pts) : null;
   if (line && line.maxDev < 1e-8 * Math.max(sx, sy)) {
     push({ type: 'collinear', title: '한 직선 위에 있음', confidence: 1,
       detail: `모든 점이 같은 직선 위에 놓입니다.`, formula: line.equation });
@@ -82,7 +82,7 @@ export function analyzePointSet(points, opts = {}) {
   }
 
   // 5) 대칭성
-  const sym = symmetries(pts, Math.max(sx, sy));
+  const sym = n >= 3 ? symmetries(pts, Math.max(sx, sy)) : [];
   for (const s of sym) push({ type: 'symmetry', title: s.title, detail: s.detail, confidence: 0.85 });
 
   // 6) 이웃 점 사이 거리의 규칙

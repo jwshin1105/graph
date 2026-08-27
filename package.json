@@ -4,7 +4,7 @@
   "description": "적응형 등고선 + 고립해(점열) 탐색 + 규칙성 자동 분석 그래프 계산기",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "serve": "node scripts/serve.js"
   },
   "license": "MIT"
