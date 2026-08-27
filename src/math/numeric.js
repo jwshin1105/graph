@@ -42,7 +42,10 @@ export function brent(f, a, b, tol = 1e-13, maxIter = 100) {
  * 부호 변화 + (부호 변화 없는) 접점(중근)까지 함께 찾아내는 것이 핵심.
  * 극점(1/x, tan x 등)에서 생기는 가짜 근은 걸러낸다.
  */
-export function findRoots(f, a, b, samples = 2000, tol = 1e-9) {
+export function findRoots(f, a, b, samples = 2000, tol = 1e-9, opts = {}) {
+  // tangential:false 이면 부호가 실제로 바뀌는 근만 찾는다.
+  // f'' ≡ 0 인 직선·상수함수에서 "변곡점 2000곳" 같은 헛된 결과를 막는다.
+  const { tangential = true } = opts;
   const roots = [];
   const h = (b - a) / samples;
   let px = a, pv = f(a);
@@ -65,7 +68,7 @@ export function findRoots(f, a, b, samples = 2000, tol = 1e-9) {
         const jump = Math.abs(v - pv);
         const local = Math.max(Math.abs(v), Math.abs(pv));
         if (!(local > 1e3 && jump > 1e3)) add(brent(f, px, x));
-      } else if (pv * v > 0) {
+      } else if (pv * v > 0 && tangential) {
         // 부호가 유지되어도 |f| 가 국소 최소이고 거의 0 이면 중근(접점)
         const m = 0.5 * (px + x);
         const vm = f(m);

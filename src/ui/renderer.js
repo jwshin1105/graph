@@ -92,16 +92,18 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const labelY = Math.min(Math.max(ay + 4, 4), view.height - 16);
+    const xMax = Math.max(Math.abs(view.xmin), Math.abs(view.xmax));
     for (const v of tx.values) {
       if (v === 0) continue;
-      ctx.fillText(formatTick(v, tx.step), view.toPxX(v), labelY);
+      ctx.fillText(formatTick(v, tx.step, xMax), view.toPxX(v), labelY);
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     const labelX = Math.min(Math.max(ax - 6, 30), view.width - 4);
+    const yMax = Math.max(Math.abs(view.ymin), Math.abs(view.ymax));
     for (const v of ty.values) {
       if (v === 0) continue;
-      ctx.fillText(formatTick(v, ty.step), labelX, view.toPxY(v));
+      ctx.fillText(formatTick(v, ty.step, yMax), labelX, view.toPxY(v));
     }
     ctx.textAlign = 'right';
     ctx.textBaseline = 'top';
@@ -182,6 +184,9 @@ export class Renderer {
     ctx.fillStyle = color;
     const w = (bounds.xmax - bounds.xmin) / cols;
     const h = (bounds.ymax - bounds.ymin) / rows;
+    // 사각형을 하나씩 칠하면 겹치는 1px 이음매마다 알파가 두 번 얹혀
+    // 격자 무늬가 생긴다. 전체를 하나의 경로로 모아 한 번에 칠한다.
+    ctx.beginPath();
     for (let j = 0; j < rows; j++) {
       let run = -1;
       for (let i = 0; i <= cols; i++) {
@@ -192,11 +197,12 @@ export class Renderer {
           const x1 = view.toPxX(bounds.xmin + i * w);
           const y0 = view.toPxY(bounds.ymin + (j + 1) * h);
           const y1 = view.toPxY(bounds.ymin + j * h);
-          ctx.fillRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+          ctx.rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
           run = -1;
         }
       }
     }
+    ctx.fill();
     ctx.restore();
   }
 

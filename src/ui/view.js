@@ -70,9 +70,20 @@ export function ticks(min, max, targetCount) {
   return { step, values: out };
 }
 
-export function formatTick(v, step) {
+/**
+ * 눈금 표기.
+ * 축 전체에서 표기 방식을 하나로 정한다. 값마다 따로 판단하면
+ * 0.0002 옆에 1.0e-4 가 나란히 찍히는 일이 생긴다.
+ */
+export function formatTick(v, step, max) {
   if (v === 0) return '0';
+  const big = Math.max(Math.abs(max ?? v), Math.abs(step));
+  if (big >= 1e5 || big < 1e-3) {
+    let e = Math.floor(Math.log10(step));
+    let m = Math.round(v / Math.pow(10, e));
+    if (Math.abs(m) >= 10 && m % 10 === 0) { m /= 10; e += 1; }
+    return `${m}e${e}`;
+  }
   const digits = Math.max(0, -Math.floor(Math.log10(step)) + 1);
-  if (Math.abs(v) >= 1e5 || Math.abs(v) < 1e-4) return v.toExponential(1);
-  return parseFloat(v.toFixed(Math.min(10, digits))).toString();
+  return parseFloat(v.toFixed(Math.min(12, digits))).toString();
 }

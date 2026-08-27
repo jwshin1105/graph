@@ -2,7 +2,7 @@
 
 import { View } from './view.js';
 import { Renderer, PALETTE } from './renderer.js';
-import { createContext, createObject, computeObject, analyzeObject } from './objects.js';
+import { createContext, createObject, computeObject, analyzeObject, missingRefs } from './objects.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const EXAMPLES = [
@@ -92,7 +92,9 @@ class App {
 
   // ── 계산 · 그리기 ────────────────────────
   compute() {
-    const b = this.view.bounds();
+    // 보이는 영역보다 조금 넓게 계산해 둔다. 끌기 중에는 다시 풀지 않으므로
+    // 이 여유분이 있어야 손을 놓기 전까지 가장자리가 비어 보이지 않는다.
+    const b = padBounds(this.view.bounds(), 0.12);
     const t0 = performance.now();
     let pts = 0;
     for (const o of this.objects) {
@@ -100,6 +102,9 @@ class App {
       try {
         o.data = computeObject(o, b);
         pts += (o.data.points || []).length;
+        // 아직 정의되지 않은 이름을 쓰고 있으면 조용히 NaN 을 내는 대신 알려 준다
+        const miss = missingRefs(o, this.ctx);
+        o.missing = miss.length ? miss : null;
       } catch (e) {
         o.data = null;
         o.runtimeError = e.message;
@@ -152,8 +157,10 @@ class App {
     const el = document.getElementById('status');
     const b = this.view.bounds();
     const span = b.xmax - b.xmin;
+    // 확대할수록 자릿수를 늘려야 [0, 0] 처럼 뭉개지지 않는다
+    const digits = Math.min(12, Math.max(3, 2 - Math.floor(Math.log10(span))));
     el.textContent =
-      `x ∈ [${trimNum(b.xmin, 3)}, ${trimNum(b.xmax, 3)}]  ·  1칸 ≈ ${trimNum(span / 10, 3)}`
+      `x ∈ [${trimNum(b.xmin, digits)}, ${trimNum(b.xmax, digits)}]  ·  1칸 ≈ ${trimNum(span / 10, digits)}`
       + (this.lastCost ? `  ·  ${this.lastCost.toFixed(0)}ms` : '')
       + (this.lastPoints ? `  ·  점 ${this.lastPoints}개` : '');
   }
@@ -162,9 +169,23 @@ class App {
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => {
       this.raf = null;
-      if (this.needsCompute) this.compute();
+      // 끌거나 확대하는 동안에는 다시 풀지 않고 이미 구해 둔 해집합을 그대로 그린다.
+      // 해집합은 수학 좌표로 저장되어 있으므로 화면 변환만 바뀌면 그림은 그대로 맞고,
+      // 무거운 음함수가 여럿 올라와 있어도 손놀림이 끊기지 않는다.
+      if (this.needsCompute && !this.deferCompute) this.compute();
       this.draw();
     });
+  }
+
+  /** 상호작용이 끝난 뒤 다시 계산하도록 예약 */
+  deferRecompute(ms = 160) {
+    this.deferCompute = true;
+    clearTimeout(this.deferTimer);
+    this.deferTimer = setTimeout(() => {
+      this.deferCompute = false;
+      this.needsCompute = true;
+      this.schedule();
+    }, ms);
   }
 
   // ── UI ──────────────────────────────────
@@ -230,6 +251,18 @@ class App {
         em.textContent = `⚠ ${o.error}`;
         row.append(em);
       } else if (o.source.trim()) {
+        if (o.missing) {
+          const w = document.createElement('div');
+          w.className = 'notemsg';
+          w.textContent = `⚠ ${o.missing.join(', ')} 가 아직 정의되지 않았습니다.`;
+          row.append(w);
+        }
+        if (o.note) {
+          const w = document.createElement('div');
+          w.className = 'notemsg';
+          w.textContent = `ℹ ${o.note}`;
+          row.append(w);
+        }
         const meta = document.createElement('div');
         meta.className = 'item-meta';
         meta.innerHTML = `<span class="tag">${KIND_LABEL[o.kind] || o.kind}</span>`;
@@ -353,6 +386,7 @@ class App {
 
     c.addEventListener('pointerdown', (e) => {
       dragging = true; moved = false;
+      this.deferCompute = true;
       lastX = e.clientX; lastY = e.clientY;
       c.setPointerCapture(e.pointerId);
     });
@@ -370,7 +404,12 @@ class App {
       this.hover = this.probe(px, py);
       this.schedule();
     });
-    const end = () => { dragging = false; if (moved) { this.needsCompute = true; this.schedule(); } };
+    const end = () => {
+      dragging = false;
+      this.deferCompute = false;
+      if (moved) { this.needsCompute = true; }
+      this.schedule();
+    };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
     c.addEventListener('pointerleave', () => { this.hover = null; this.schedule(); });
@@ -381,6 +420,7 @@ class App {
       const f = Math.pow(0.999, e.deltaY);
       this.view.zoomAt(e.clientX - rect.left, e.clientY - rect.top, f);
       this.needsCompute = true;
+      this.deferRecompute();
       this.schedule();
     }, { passive: false });
 
@@ -476,6 +516,17 @@ class App {
     }
     return { px, py, text: `(${trimNum(mx, 4)}, ${trimNum(my, 4)})` };
   }
+}
+
+/** 화면 영역을 비율만큼 넓힌 계산용 경계 */
+function padBounds(b, pad) {
+  const dx = (b.xmax - b.xmin) * pad;
+  const dy = (b.ymax - b.ymin) * pad;
+  return {
+    xmin: b.xmin - dx, xmax: b.xmax + dx,
+    ymin: b.ymin - dy, ymax: b.ymax + dy,
+    width: b.width * (1 + 2 * pad), height: b.height * (1 + 2 * pad),
+  };
 }
 
 const KIND_LABEL = {

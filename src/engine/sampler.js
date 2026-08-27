@@ -35,7 +35,10 @@ export function sampleFunction(f, xmin, xmax, opts = {}) {
     // 한 점 사이에서 y 가 화면 높이의 1% 이상 건너뛰면 "끊긴 곳"으로 본다.
     // 극점(1/x, tan x)뿐 아니라 계단함수(floor, sgn)의 도약도 이 기준에 걸린다.
     const dy = isFinite(y0) && isFinite(y1) ? Math.abs((y1 - y0) / yspan) : 0;
-    const bigJump = dy > 0.01;
+    // 좌표가 아주 큰 곳(x ≈ 1e15)에서는 부동소수 눈금 자체가 굵어서
+    // 매끄러운 직선도 계단처럼 보인다. 그 눈금보다 확실히 큰 도약만 인정한다.
+    const resolution = 1e-12 * Math.max(Math.abs(y0), Math.abs(y1), Math.abs(xm));
+    const bigJump = dy > 0.01 && Math.abs(y1 - y0) > resolution;
 
     if (!isFinite(ym)) {
       if (depth < 10) {

@@ -67,8 +67,15 @@ function classify(obj, asts, ctx) {
   const distinctVarArgs = (n) =>
     n.type === 'call' && n.args.length > 0 && n.args.every((p) => p.type === 'var')
     && new Set(n.args.map((p) => p.name)).size === n.args.length;
-  if (main.type === 'cmp' && main.op === '=' && main.a.type === 'call' && !isBuiltin(main.a.name)
-      && distinctVarArgs(main.a) && !ctx.defs.has(main.a.name)) {
+  const looksLikeDef = main.type === 'cmp' && main.op === '=' && main.a.type === 'call'
+    && !isBuiltin(main.a.name) && distinctVarArgs(main.a);
+  if (looksLikeDef && ctx.defs.has(main.a.name)) {
+    // 이미 있는 이름이면 새 정의가 아니라 "그 함수에 대한 방정식"으로 읽는다.
+    // 조용히 넘기면 사용자가 재정의한 줄 알기 쉬우므로 그렇다고 알린다.
+    obj.note = `${main.a.name} 는 이미 정의되어 있어서 이 줄은 방정식으로 읽었습니다. `
+      + `다시 정의하려면 원래 줄을 고쳐 주세요.`;
+  }
+  if (looksLikeDef && !ctx.defs.has(main.a.name)) {
     const name = main.a.name;
     const params = main.a.args.map((p) => p.name);
     ctx.defs.set(name, { params, body: main.b, compiled: null });
@@ -330,6 +337,39 @@ function autoParametricRange(obj) {
   return closed ? [0, 2 * Math.PI] : [-4 * Math.PI, 4 * Math.PI];
 }
 
+/** 점화식이 자기 이전 항을 참조하는지 */
+function referencesEarlier(node, name, idxVar) {
+  let found = false;
+  (function walk(n) {
+    if (!n || typeof n !== 'object' || found) return;
+    if (n.type === 'index' && n.base.type === 'var' && n.base.name === name) {
+      if (!(n.index.type === 'var' && n.index.name === idxVar)) found = true;
+    }
+    for (const k of ['a', 'b', 'base', 'index']) if (n[k]) walk(n[k]);
+    for (const k of ['args', 'items']) if (n[k]) n[k].forEach(walk);
+  })(node);
+  return found;
+}
+
+/** 식이 참조하지만 아직 정의되지 않은 이름들 */
+export function missingRefs(obj, ctx) {
+  const out = new Set();
+  const seen = new Set();
+  (function walk(n) {
+    if (!n || typeof n !== 'object') return;
+    if (n.type === 'call' && !isBuiltin(n.name) && !ctx.defs.has(n.name) && !ctx.seqs.has(n.name)) {
+      out.add(n.name);
+    }
+    if (n.type === 'var' && !['x', 'y', 'r', 'n', 'k', 't', 'θ'].includes(n.name)
+        && !ctx.defs.has(n.name) && !ctx.seqs.has(n.name)) {
+      seen.add(n.name);
+    }
+    for (const k of ['a', 'b', 'base', 'index']) if (n[k]) walk(n[k]);
+    for (const k of ['args', 'items']) if (n[k]) n[k].forEach(walk);
+  })(obj.asts ? obj.asts[obj.asts.length - 1] : null);
+  return [...out];
+}
+
 function collectEqs(node, includeIneq = false) {
   const out = [];
   (function walk(n) {
@@ -364,19 +404,30 @@ function buildSequence(obj, asts, ctx) {
   }
 
   const cache = new Map(seeds);
+  const base = seeds.size ? Math.min(...seeds.keys()) : 1;
   const entry = {
     values: cache,
     get(n) {
       const k = Math.round(n);
+      if (!isFinite(k)) return NaN;
       if (cache.has(k)) return cache.get(k);
-      if (k < (seeds.size ? Math.min(...seeds.keys()) : 1) - 50 || k > 100000) return NaN;
-      cache.set(k, NaN);                                  // 순환 참조 방지
-      const env = Object.create(null);
-      env[idxVar] = k - shift;
-      const v = body(env);
-      cache.set(k, v);
-      return v;
+      if (k < base - 50 || k > 100000) return NaN;
+      // 재귀 대신 낮은 항부터 차례로 채운다.
+      // a_50000 같은 요청에서도 호출 스택이 넘치지 않는다.
+      const start = Math.max(base, lowestMissing(cache, base, k));
+      for (let i = start; i <= k; i++) {
+        if (cache.has(i)) continue;
+        cache.set(i, NaN);                    // 자기참조 차단용 임시값
+        const env = Object.create(null);
+        env[idxVar] = i - shift;
+        cache.set(i, body(env));
+      }
+      return cache.get(k);
     },
+  };
+  const lowestMissing = (map, from, upto) => {
+    for (let i = from; i <= upto; i++) if (!map.has(i)) return i;
+    return upto;
   };
   ctx.seqs.set(name, entry);
   const body = compile(main.b, ctx);
@@ -388,6 +439,10 @@ function buildSequence(obj, asts, ctx) {
   obj.label = asts.map(format).join(';  ');
   obj.terms = null;   // 계산은 compute 에서
   obj.count = 25;
+  if (!seeds.size && referencesEarlier(main.b, name, idxVar)) {
+    obj.note = `${name}_1 = … 처럼 초기값을 함께 주어야 항이 정해집니다. `
+      + `세미콜론으로 이어 쓰세요: "${name}_1 = 1; ${format(main)}"`;
+  }
   return obj;
 }
 
@@ -604,6 +659,7 @@ export function analyzeObject(obj, bounds, ctx) {
         return { title: '수열 분석', ...r,
           lead: `${(obj.name || 'a')}_${obj.n0} 부터: ${terms.slice(0, 10).map((v) => pretty(v)).join(', ')}${terms.length > 10 ? ' …' : ''}` };
       }
+      case 'region': return analyzeRegion(obj, bounds);
       case 'parametric':
       case 'polar': {
         const d = computeObject(obj, bounds);
@@ -649,6 +705,57 @@ function analyzeFunctionObject(obj, bounds, ctx) {
   };
 }
 
+/** 부등식 영역의 성질: 넓이·유계 여부·경계 곡선의 종류 */
+function analyzeRegion(obj, bounds) {
+  const d = computeObject(obj, bounds);
+  const { mask, cols, rows } = d.mask;
+  let inside = 0;
+  for (let i = 0; i < mask.length; i++) inside += mask[i];
+  const cellArea = ((bounds.xmax - bounds.xmin) / cols) * ((bounds.ymax - bounds.ymin) / rows);
+  const viewArea = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
+  const ratio = inside / (cols * rows);
+
+  // 화면 테두리에 닿아 있으면 화면 밖으로 이어지는(유계가 아닐 수 있는) 영역
+  let touchesEdge = false;
+  for (let i = 0; i < cols; i++) if (mask[i] || mask[(rows - 1) * cols + i]) touchesEdge = true;
+  for (let j = 0; j < rows; j++) if (mask[j * cols] || mask[j * cols + cols - 1]) touchesEdge = true;
+
+  const findings = [];
+  if (ratio === 0) {
+    findings.push({ type: 'empty', title: '해가 없는 부등식', confidence: 1,
+      detail: '보이는 범위 안에서 이 부등식을 만족하는 점이 없습니다.' });
+  } else if (ratio > 0.999) {
+    findings.push({ type: 'all', title: '보이는 범위 전체가 해', confidence: 1,
+      detail: '이 화면 안에서는 모든 점이 부등식을 만족합니다.' });
+  } else if (touchesEdge) {
+    findings.push({ type: 'unbounded', title: '화면 밖으로 이어지는 영역', confidence: 0.8,
+      detail: `보이는 부분의 넓이는 약 ${trimNum(inside * cellArea, 4)} 이고, 전체 화면의 ${(ratio * 100).toFixed(1)}% 입니다. 경계가 화면 끝에 닿아 있어 실제 영역은 더 넓을 수 있습니다.` });
+  } else {
+    findings.push({ type: 'bounded', title: '유계 영역', confidence: 0.9,
+      detail: `넓이가 약 ${trimNum(inside * cellArea, 4)} 인 닫힌 영역입니다 (화면의 ${(ratio * 100).toFixed(1)}%).` });
+  }
+
+  // 경계 곡선의 종류
+  if (d.polylines.length) {
+    const sample = [];
+    for (const line of d.polylines) {
+      const stride = Math.max(2, Math.floor(line.length / 40) * 2);
+      for (let i = 0; i < line.length; i += stride) sample.push([line[i], line[i + 1]]);
+    }
+    if (sample.length >= 6) {
+      const conic = fitConic(sample.slice(0, 120));
+      if (conic && conic.residual < 1e-4) {
+        findings.push({ type: 'boundary', title: `경계선은 ${conic.kind}`, confidence: 0.85,
+          detail: '점선으로 그린 경계가 이 이차곡선입니다.', formula: conic.equation });
+      }
+    }
+    findings.push({ type: 'branches', title: `경계 곡선 ${d.polylines.length}가지`, confidence: 0.6,
+      detail: '보이는 범위에서 경계가 이만큼의 조각으로 나뉩니다.' });
+  }
+  void viewArea;
+  return { title: '부등식 영역 분석', findings, summary: findings[0].title };
+}
+
 function analyzeImplicit(obj, bounds) {
   const d = computeObject(obj, bounds);
   const findings = [];
@@ -664,7 +771,8 @@ function analyzeImplicit(obj, bounds) {
     }
     if (sample.length >= 6) {
       const conic = fitConic(sample.slice(0, 120));
-      if (conic && conic.residual < 1e-6) {
+      // 등고선에서 뽑은 표본은 이산화 오차가 있으므로 임계값을 그에 맞춘다
+      if (conic && conic.residual < 1e-4) {
         let detail = `해집합이 ${conic.kind} 입니다.`;
         if (conic.radius) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}), 반지름 ${pretty(conic.radius)}.`;
         else if (conic.center) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}).`;

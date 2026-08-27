@@ -65,7 +65,10 @@ function build(node, ctx) {
       return (env) => {
         if (env && name in env) return env[name];
         const d = ctx.defs.get(name);
-        if (d && d.params.length === 0) return d.compiled ? d.compiled(env) : NaN;
+        if (d && d.params.length === 0) {
+          if (!d.compiled) d.compiled = build(d.body, ctx);
+          return guard(() => d.compiled(env));
+        }
         return NaN;
       };
     }
@@ -225,13 +228,24 @@ export function simpson(f, a, b, tol = 1e-10, depth = 20) {
   return sign * rec(a, b, fa, fm, fb, S(a, b, fa, fm, fb), depth);
 }
 
+// 사용자 정의가 서로를 부르는 순환(f = g+1, g = f+1)에서 스택이 터지지 않도록
+// 호출 깊이를 제한한다. 한계를 넘으면 NaN 으로 물러난다.
+let callDepth = 0;
+const MAX_CALL_DEPTH = 200;
+
+function guard(fn) {
+  if (callDepth >= MAX_CALL_DEPTH) return NaN;
+  callDepth++;
+  try { return fn(); } finally { callDepth--; }
+}
+
 function callUser(def, values, ctx, outerEnv) {
   if (!def.compiled) def.compiled = build(def.body, ctx);
   const env = Object.create(outerEnv || null);
   def.params.forEach((p, i) => {
     env[p] = values[i];
   });
-  return def.compiled(env);
+  return guard(() => def.compiled(env));
 }
 
 export function numDeriv(f, x, order = 1) {

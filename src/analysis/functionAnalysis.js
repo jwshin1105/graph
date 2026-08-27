@@ -26,6 +26,25 @@ export function analyzeFunction(f, opts = {}) {
   const defined = ys.filter(isFinite);
   if (!defined.length) return { findings, summary: '이 구간에서 정의되지 않습니다.' };
 
+  // ── 퇴화 판정: 상수인가, 직선인가 ────────────────────────
+  // 이걸 먼저 걸러내지 않으면 f′ ≡ 0, f″ ≡ 0 위에서 근을 찾다가
+  // "변곡점 2000곳" 같은 헛된 결과가 쏟아진다.
+  const fScale = Math.max(...defined.map(Math.abs), 1e-300);
+  const yLo = Math.min(...defined), yHi = Math.max(...defined);
+  const isConstant = yHi - yHi === 0 && yHi - yLo <= 1e-12 * Math.max(1, fScale);
+  const isLinear = !isConstant && linearFit(xs, ys, fScale);
+
+  if (isConstant) {
+    const c = defined[0];
+    push({ type: 'constant', title: '상수함수', confidence: 1,
+      detail: `이 구간에서 값이 늘 ${S(c)} 입니다. 도함수는 0 이고 극값도 변곡점도 없습니다.` });
+    if (Math.abs(c) < 1e-12) {
+      push({ type: 'allroots', title: '모든 점이 해', confidence: 1,
+        detail: 'f(x) = 0 이 항상 성립하므로 해가 특정한 점들이 아니라 구간 전체입니다.' });
+    }
+    return { findings, summary: `f(x) = ${S(c)} (상수함수)`, roots: [], maxima: [], minima: [], inflex: [] };
+  }
+
   // 정의역 구멍
   const holes = [];
   const step = (xmax - xmin) / N;
@@ -47,8 +66,18 @@ export function analyzeFunction(f, opts = {}) {
   }
 
   // 근 (x 절편) → 점열로 다시 분석
-  const roots = findRoots(f, xmin, xmax, 4000);
-  if (roots.length) {
+  const ROOT_SAMPLES = 4000;
+  const roots = findRoots(f, xmin, xmax, ROOT_SAMPLES);
+  // 근끼리 표본 간격만큼 다닥다닥 붙어 있으면 "점"이 아니라 "구간"이 해다
+  const sampleStep = (xmax - xmin) / ROOT_SAMPLES;
+  let adjacent = 0;
+  for (let i = 1; i < roots.length; i++) if (roots[i] - roots[i - 1] < 3 * sampleStep) adjacent++;
+  if (roots.length > 20 && adjacent > roots.length * 0.3) {
+    // 해가 점이 아니라 구간을 이루는 경우 (예: floor x 는 [0,1) 전체가 해)
+    push({ type: 'rootband', title: '해가 구간을 이룹니다', confidence: 0.9,
+      detail: `f 가 0 인 곳이 낱개의 점이 아니라 구간입니다 (표본에서만 ${roots.length}개). `
+        + '점열로 보기 어려우니 확대해서 확인해 주세요.' });
+  } else if (roots.length) {
     push({ type: 'roots', title: `실근 ${roots.length}개`, confidence: 1,
       detail: roots.slice(0, 12).map((r) => S(r)).join(', ') + (roots.length > 12 ? ' …' : ''),
       points: roots.map((r) => [r, 0]) });
@@ -62,8 +91,8 @@ export function analyzeFunction(f, opts = {}) {
     }
   }
 
-  // 극값
-  const crit = findRoots(df, xmin, xmax, 3000);
+  // 극값 — 도함수의 "부호가 바뀌는" 영점만 본다 (접하는 영점은 안장점이라 극값이 아니다)
+  const crit = findRoots(df, xmin, xmax, 3000, 1e-9, { tangential: false });
   const maxima = [], minima = [];
   for (const c of crit) {
     const s = d2f(c);
@@ -77,10 +106,18 @@ export function analyzeFunction(f, opts = {}) {
   if (minima.length) push({ type: 'min', title: `극소 ${minima.length}곳`, confidence: 0.95,
     detail: minima.slice(0, 8).map(([x, y]) => `(${S(x)}, ${S(y)})`).join(', '), points: minima });
 
-  // 변곡점
-  const inflex = findRoots(d2f, xmin, xmax, 2000)
+  // 변곡점 — 이차 도함수의 부호가 실제로 바뀌는 곳만.
+  // 직선은 f″ ≡ 0 이므로 아예 건너뛴다.
+  const inflex = isLinear ? [] : findRoots(d2f, xmin, xmax, 2000, 1e-9, { tangential: false })
+    // 수치 이차미분은 잡음이 커서 직선 구간에서도 부호가 흔들린다.
+    // "곡선이 자기 접선을 실제로 가로지르는가"로 다시 확인한다.
+    .filter((x) => crossesTangent(f, df, x, (xmax - xmin) / 200, fScale))
     .map((x) => [x, f(x)])
     .filter(([, y]) => isFinite(y));
+  if (isLinear) {
+    push({ type: 'linear', title: '일차함수 (직선)', confidence: 1,
+      detail: '기울기가 일정하므로 극값도 변곡점도 없습니다.' });
+  }
   if (inflex.length) push({ type: 'inflection', title: `변곡점 ${inflex.length}곳`, confidence: 0.85,
     detail: inflex.slice(0, 8).map(([x, y]) => `(${S(x)}, ${S(y)})`).join(', '), points: inflex });
 
@@ -88,8 +125,8 @@ export function analyzeFunction(f, opts = {}) {
   const parity = checkParity(f, xmin, xmax);
   if (parity) push(parity);
 
-  // 주기성
-  const per = checkPeriod(f, xmin, xmax);
+  // 주기성 — 상수·직선은 의미가 없다
+  const per = isLinear ? null : checkPeriod(f, xmin, xmax);
   if (per) push(per);
 
   // 점근선
@@ -107,6 +144,38 @@ export function analyzeFunction(f, opts = {}) {
       : '특별한 성질을 찾지 못했습니다.'),
     roots, maxima, minima, inflex,
   };
+}
+
+/**
+ * x 에서 곡선이 접선을 가로지르는지 — 변곡점의 기하학적 정의.
+ * 양옆에서 (곡선 − 접선) 의 부호가 반대이고, 그 크기가 잡음보다 확실히 커야 한다.
+ */
+function crossesTangent(f, df, x, delta, fScale) {
+  const y = f(x);
+  const m = df(x);
+  if (!isFinite(y) || !isFinite(m)) return false;
+  const eps = 1e-9 * Math.max(1, fScale);
+  for (let k = 1; k <= 3; k++) {
+    const d = delta / Math.pow(2, k - 1);
+    const l = f(x - d) - (y - m * d);
+    const r = f(x + d) - (y + m * d);
+    if (!isFinite(l) || !isFinite(r)) continue;
+    if (Math.abs(l) > eps && Math.abs(r) > eps && l * r < 0) return true;
+  }
+  return false;
+}
+
+/** 표본이 한 직선 위에 놓이는가 (양 끝을 잇는 직선과의 최대 편차로 판정) */
+function linearFit(xs, ys, fScale) {
+  const pts = xs.map((x, i) => [x, ys[i]]).filter(([, y]) => isFinite(y));
+  if (pts.length < 10) return false;
+  const [x0, y0] = pts[0];
+  const [x1, y1] = pts[pts.length - 1];
+  if (Math.abs(x1 - x0) < 1e-300) return false;
+  const m = (y1 - y0) / (x1 - x0);
+  let dev = 0;
+  for (const [x, y] of pts) dev = Math.max(dev, Math.abs(y - (y0 + m * (x - x0))));
+  return dev <= 1e-9 * Math.max(1, fScale);
 }
 
 function central(f, x, h) {
@@ -238,14 +307,14 @@ function asymptotes(f, xmin, xmax, holes) {
 const round = (x) => (Math.abs(x - Math.round(x)) < 1e-4 ? Math.round(x) : x);
 
 function monotonicity(xs, ys) {
-  let inc = true, dec = true, seen = 0;
+  let inc = true, dec = true, seen = 0, moved = false;
   for (let i = 1; i < ys.length; i++) {
     if (!isFinite(ys[i - 1]) || !isFinite(ys[i])) continue;
     seen++;
-    if (ys[i] < ys[i - 1] - 1e-12) inc = false;
-    if (ys[i] > ys[i - 1] + 1e-12) dec = false;
+    if (ys[i] < ys[i - 1] - 1e-12) { inc = false; moved = true; }
+    if (ys[i] > ys[i - 1] + 1e-12) { dec = false; moved = true; }
   }
-  if (seen < 50) return null;
+  if (seen < 50 || !moved) return null;    // 값이 전혀 안 변하면 증감을 말할 수 없다
   if (inc) return { type: 'mono', title: '구간 전체에서 증가', confidence: 0.9, detail: '단조증가 함수입니다.' };
   if (dec) return { type: 'mono', title: '구간 전체에서 감소', confidence: 0.9, detail: '단조감소 함수입니다.' };
   return null;

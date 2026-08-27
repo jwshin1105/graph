@@ -1,7 +1,7 @@
 // 점 집합에 이차곡선 Ax² + Bxy + Cy² + Dx + Ey + F = 0 을 맞추고 종류를 판별한다.
 // 제약 |z| = 1 아래 |Mz|² 를 최소화 → 산포행렬의 최소 고유벡터.
 
-import { smallestEigenvector, pretty } from '../math/numeric.js';
+import { smallestEigenvector, pretty, toRational } from '../math/numeric.js';
 
 export function fitConic(pts) {
   if (pts.length < 5) return null;
@@ -33,11 +33,15 @@ export function fitConic(pts) {
   const E = (-2 * c * my - b * mx) / (sc * sc) + e / sc;
   const F = (a * mx * mx + b * mx * my + c * my * my) / (sc * sc) - (d * mx + e * my) / sc + f;
 
-  const deg = degeneracy(A, B, C, D, E, F);
+  // 판정 허용오차는 적합 잔차에 맞춘다.
+  // 곡선을 따라 뽑은 표본은 등고선 이산화 때문에 잔차가 1e-6 수준까지 커지는데,
+  // 고정된 1e-8 잣대로는 멀쩡한 원도 타원으로 밀려난다.
+  const tol = Math.max(1e-9, resid * 200);
+  const deg = degeneracy(z[0], z[1], z[2], z[3], z[4], z[5], tol);
   return {
-    coef: [A, B, C, D, E, F], residual: resid,
-    kind: deg || classify(A, B, C, D, E, F), degenerate: !!deg,
-    ...describe(A, B, C, D, E, F),
+    coef: [A, B, C, D, E, F], residual: resid, tol,
+    kind: deg || classify(z[0], z[1], z[2], tol), degenerate: !!deg,
+    ...describe(A, B, C, D, E, F, tol),
   };
 }
 
@@ -46,34 +50,35 @@ export function fitConic(pts) {
  * 이차형식 행렬 [[A, B/2, D/2], [B/2, C, E/2], [D/2, E/2, F]] 의 행렬식이 0 이면
  * 곡선이 두 직선·한 점 등으로 무너진 경우다.
  */
-function degeneracy(A, B, C, D, E, F) {
+function degeneracy(A, B, C, D, E, F, tol = 1e-8) {
   const M = [[A, B / 2, D / 2], [B / 2, C, E / 2], [D / 2, E / 2, F]];
   const det =
     M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
     M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
     M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
   const scale = Math.max(Math.abs(A), Math.abs(B), Math.abs(C), Math.abs(D), Math.abs(E), Math.abs(F), 1e-30);
-  if (Math.abs(det) > 1e-8 * scale ** 3) return null;
+  if (Math.abs(det) > tol * scale ** 3) return null;
   const disc = B * B - 4 * A * C;
   const q = Math.max(Math.abs(A), Math.abs(B), Math.abs(C));
   if (q < 1e-12 * scale) return '직선';
-  if (disc > 1e-9 * q * q) return '두 직선(교차)';
-  if (disc < -1e-9 * q * q) return '한 점';
+  if (disc > tol * q * q) return '두 직선(교차)';
+  if (disc < -tol * q * q) return '한 점';
   return '두 평행선';
 }
 
-function classify(A, B, C) {
+function classify(A, B, C, tol = 1e-9) {
   const disc = B * B - 4 * A * C;
   const quadScale = Math.max(Math.abs(A), Math.abs(B), Math.abs(C));
-  if (quadScale < 1e-10) return '직선';
-  if (Math.abs(disc) < 1e-9 * quadScale * quadScale) return '포물선';
+  if (quadScale < Math.max(1e-10, tol)) return '직선';
+  if (Math.abs(disc) < tol * quadScale) return '포물선';
   if (disc < 0) {
-    return Math.abs(A - C) < 1e-8 * quadScale && Math.abs(B) < 1e-8 * quadScale ? '원' : '타원';
+    const round = Math.abs(A - C) < tol * quadScale && Math.abs(B) < tol * quadScale;
+    return round ? '원' : '타원';
   }
   return '쌍곡선';
 }
 
-function describe(A, B, C, D, E, F) {
+function describe(A, B, C, D, E, F, tol = 1e-9) {
   const disc = B * B - 4 * A * C;
   const out = {};
   if (Math.abs(disc) > 1e-12) {
@@ -89,18 +94,25 @@ function describe(A, B, C, D, E, F) {
   }
   // 회전각
   if (Math.abs(B) > 1e-12) out.rotation = 0.5 * Math.atan2(B, A - C);
-  out.equation = conicString([A, B, C, D, E, F]);
+  out.equation = conicString([A, B, C, D, E, F], tol);
   return out;
 }
 
-export function conicString(coef) {
+export function conicString(coef, tol = 1e-9) {
   const names = ['x²', 'xy', 'y²', 'x', 'y', ''];
-  // 가장 큰 계수로 정규화해 읽기 좋게
+  // 가장 큰 계수로 정규화한 뒤, 적합 정밀도만큼만 남기고 정리한다.
+  // 그러지 않으면 0.250004·x² − 1.8e-6·xy 처럼 잡음이 그대로 식에 남는다.
   const m = Math.max(...coef.map(Math.abs));
-  const c = coef.map((v) => v / m);
+  const snap = Math.max(tol * 20, 1e-9);
+  const c = coef.map((v) => {
+    const t = v / m;
+    if (Math.abs(t) < snap) return 0;
+    const r = toRational(t, 100, snap);
+    return r ? r.p / r.q : t;
+  });
   let s = '';
   c.forEach((v, i) => {
-    if (Math.abs(v) < 1e-9) return;
+    if (v === 0) return;
     const mag = pretty(Math.abs(v));
     const body = names[i] ? (mag === '1' ? names[i] : `${mag}${/^\d+$/.test(mag) ? '' : '·'}${names[i]}`) : mag;
     s += s === '' ? (v < 0 ? `-${body}` : body) : (v < 0 ? ` - ${body}` : ` + ${body}`);

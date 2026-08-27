@@ -21,15 +21,30 @@ function spread(v) {
  * @returns {{findings:Array, summary:string}}
  */
 export function analyzePointSet(points, opts = {}) {
-  const given = points.filter((p) => p && isFinite(p[0]) && isFinite(p[1]));
+  const raw = points.filter((p) => p && isFinite(p[0]) && isFinite(p[1]));
+  // 같은 점이 여러 번 들어오면 "세 점이 한 직선 위" 같은 헛된 결론이 나온다.
+  // 중복은 먼저 걷어 내고, 몇 개가 겹쳤는지만 따로 알린다.
+  const given = [];
+  for (const p of raw) {
+    if (!given.some((q) => q[0] === p[0] && q[1] === p[1])) given.push(p);
+  }
+  const duplicates = raw.length - given.length;
   // 대부분의 검사는 x 순으로 정렬해서 보고, 순서가 의미를 갖는 검사(닮음변환·나선)는
   // 입력된 차례 그대로 본다.
   const pts = given.slice().sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
   const findings = [];
   const n = pts.length;
+  if (duplicates) {
+    findings.push({ type: 'duplicate', title: `같은 점이 ${duplicates}번 겹쳐 있음`, confidence: 1,
+      detail: `서로 다른 점은 ${n}개뿐입니다. 겹친 점은 빼고 구조를 보았습니다.` });
+  }
   if (n === 0) return { findings, summary: '점이 없습니다.', points: pts };
   if (n === 1) {
     return { findings, points: pts, summary: `해가 한 점 (${pretty(pts[0][0])}, ${pretty(pts[0][1])}) 뿐입니다.` };
+  }
+  if (n === 2) {
+    return { findings, points: pts,
+      summary: `점이 둘뿐이라 구조를 말할 수 없습니다: (${pretty(pts[0][0])}, ${pretty(pts[0][1])}), (${pretty(pts[1][0])}, ${pretty(pts[1][1])})` };
   }
 
   const xs = pts.map((p) => p[0]);
@@ -64,12 +79,14 @@ export function analyzePointSet(points, opts = {}) {
   // 3) 이차곡선
   if (n >= 5 && !findings.some((f) => f.type === 'collinear')) {
     const conic = fitConic(pts);
-    if (conic && conic.residual < 1e-7 && !conic.degenerate) {
-      let detail = `모든 점이 ${conic.kind} 위에 있습니다.`;
+    if (conic && conic.residual < 2e-3 && !conic.degenerate) {
+      const exact = conic.residual < 1e-7;
+      let detail = exact ? `모든 점이 ${conic.kind} 위에 있습니다.`
+        : `점들이 ${conic.kind} 에 가깝게 놓여 있습니다 (평균 잔차 ${trimNum(conic.residual, 8)}).`;
       if (conic.radius) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}), 반지름 ${pretty(conic.radius)}.`;
       else if (conic.center) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}).`;
-      push({ type: 'conic', title: `이차곡선(${conic.kind}) 위의 점들`, confidence: 0.95,
-        detail, formula: conic.equation });
+      push({ type: 'conic', title: exact ? `이차곡선(${conic.kind}) 위의 점들` : `대략 ${conic.kind} 모양`,
+        confidence: exact ? 0.95 : 0.6, detail, formula: conic.equation });
     }
   }
 
@@ -145,10 +162,10 @@ function fitLine(pts) {
   const r2 = sxx > 0 && syy > 0 ? (sxy * sxy) / (sxx * syy) : 1;
   let equation;
   if (Math.abs(ny) > 1e-9) {
-    const m = -nx / ny, b = -c / ny;
-    equation = `y = ${pretty(m)}${Math.abs(m) === 1 ? '' : '·'}x ${b < 0 ? '-' : '+'} ${pretty(Math.abs(b))}`
-      .replace('= 1·x', '= x').replace('= 0·x + ', '= ').replace(/= 0x \+ /, '= ');
-    if (Math.abs(m) < 1e-12) equation = `y = ${pretty(-c / ny)}`;
+    const m = -nx / ny;
+    const b = -c / ny;
+    if (Math.abs(m) < 1e-12) equation = `y = ${pretty(b)}`;
+    else equation = `y = ${coefTerm(m, 'x')}${Math.abs(b) < 1e-12 ? '' : signed(b)}`;
   } else {
     equation = `x = ${pretty(-c / nx)}`;
   }

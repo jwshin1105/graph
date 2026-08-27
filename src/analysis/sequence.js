@@ -8,11 +8,24 @@
 import { toRational, pretty, trimNum, signed, coefTerm, sup, baseStr } from '../math/numeric.js';
 import { fitModels, polyString } from './fitting.js';
 
-const REL = (a, scale) => Math.abs(a) <= scale * 1e-9 + 1e-12;
+// 절대 오차 여유(1e-12)를 두면 [1e-15, 2e-15, …] 같은 아주 작은 수열이
+// 통째로 "상수"로 오판된다. 상대 오차만으로 판정한다.
+const REL = (a, scale) => Math.abs(a) <= Math.max(scale, Number.MIN_VALUE) * 1e-9;
 
 function scaleOf(v) {
-  const m = Math.max(...v.map((x) => Math.abs(x)), 1e-30);
-  return m;
+  return Math.max(...v.map((x) => Math.abs(x)), Number.MIN_VALUE);
+}
+
+/**
+ * 규칙이 몇 번 확인되었는지에 따른 확신도.
+ * 항이 두세 개뿐이면 여러 규칙이 동시에 들어맞으므로 100% 라고 말해서는 안 된다.
+ */
+function conf(checks) {
+  if (checks <= 1) return 0.5;
+  if (checks === 2) return 0.7;
+  if (checks === 3) return 0.85;
+  if (checks === 4) return 0.95;
+  return 1;
 }
 
 /** 계차 수열 */
@@ -238,17 +251,40 @@ function matchCatalog(v, scale) {
  * @param {{n0?:number, name?:string}} opts
  */
 export function analyzeSequence(values, opts = {}) {
-  const v = values.filter((x) => typeof x === 'number' && isFinite(x));
-  const n0 = opts.n0 ?? 1;
+  // 값이 비었거나 발산한 항이 섞여 있으면 인덱스가 어긋나므로,
+  // 유한한 값이 연속으로 이어지는 가장 긴 구간만 골라 그 시작 위치를 기준으로 삼는다.
+  const run = longestFiniteRun(values);
+  const v = run.values;
+  const dropped = values.length - v.length;
+  const n0 = (opts.n0 ?? 1) + run.start;
   const nm = opts.name || 'a';
   const findings = [];
   const scale = scaleOf(v);
-  if (v.length < 2) return { findings, terms: v, n0 };
+  if (v.length < 2) {
+    return {
+      findings, terms: v, n0,
+      summary: dropped ? '값이 정의된 항이 두 개도 되지 않아 규칙을 볼 수 없습니다.'
+        : '항이 두 개는 있어야 규칙을 볼 수 있습니다.',
+    };
+  }
 
-  const push = (f) => findings.push({ confidence: 0.9, ...f });
+  // exact: 식을 정확히(허용오차 안에서) 만족시키는 규칙. 근사 모형보다 항상 앞선다.
+  const push = (f) => findings.push({ confidence: 0.9, exact: true, ...f });
   const idx = (k) => n0 + k;
   const nvar = 'n';
   const shiftStr = n0 === 1 ? nvar : n0 === 0 ? `(${nvar}+1)` : `(${nvar}-${n0 - 1})`;
+
+  // 항이 둘뿐이면 등차로도 등비로도 읽힌다 — 하나를 고르지 않고 둘 다 알린다.
+  if (v.length === 2) {
+    const d = v[1] - v[0];
+    push({ type: 'ambiguous', title: '항이 둘뿐이라 규칙을 정할 수 없음', confidence: 0.5,
+      detail: `공차 ${pretty(d)} 인 등차수열로도, `
+        + (Math.abs(v[0]) > 1e-15 ? `공비 ${pretty(v[1] / v[0])} 인 등비수열로도 ` : '')
+        + '읽힙니다. 항을 더 주면 하나로 좁혀집니다.',
+      formula: `${nm}_${nvar} = ${pretty(v[0])} ${d < 0 ? '-' : '+'} ${pretty(Math.abs(d))}(${nvar}−${n0})`
+        + (Math.abs(v[0]) > 1e-15 ? `   또는   ${nm}_${nvar} = ${pretty(v[0])}·${pretty(v[1] / v[0])}^(${nvar}−${n0})` : '') });
+    return withNote(finish(findings, v, n0, nm, opts), dropped, n0, v.length);
+  }
 
   // 0) 정수 여부
   const allInt = v.every((x) => Math.abs(x - Math.round(x)) < 1e-9 * Math.max(1, Math.abs(x)));
@@ -257,7 +293,8 @@ export function analyzeSequence(values, opts = {}) {
   if (allEqual(v, scale)) {
     push({ type: 'constant', title: '상수 수열',
       detail: `모든 항이 ${pretty(v[0])} 로 같습니다.`,
-      formula: `${nm}_${nvar} = ${pretty(v[0])}`, next: [v[0], v[0], v[0]], confidence: 1 });
+      formula: `${nm}_${nvar} = ${pretty(v[0])}`, next: [v[0], v[0], v[0]],
+      confidence: conf(v.length - 1) });
     return finish(findings, v, n0, nm, opts);
   }
 
@@ -279,13 +316,15 @@ export function analyzeSequence(values, opts = {}) {
         detail: `공차 d = ${pretty(d)} 인 등차수열입니다. 첫째항 ${pretty(v[0])}.`,
         formula: `${nm}_${nvar} = ${body}`,
         extra: `합 S_${nvar} = ${pretty(v[0])}·${nvar} + ${pretty(d / 2)}·${nvar}(${nvar}−1)`,
-        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))), confidence: 1 });
+        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))),
+        confidence: conf(table[1].length) });
     } else {
       push({ type: 'polynomial', title: `${polyDeg}차 다항식 수열`,
         detail: `제${polyDeg}계 계차가 ${pretty(table[polyDeg][0])} 로 일정합니다 → 일반항이 ${polyDeg}차 다항식입니다.`,
         formula: `${nm}_${nvar} = ${body}`,
         extra: `계차 수열: ${table.slice(1, polyDeg + 1).map((t, i) => `Δ^${i + 1}: ${t.slice(0, 5).map((x) => pretty(x)).join(', ')}…`).join(' / ')}`,
-        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))), confidence: 1 });
+        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))),
+        confidence: conf(v.length - polyDeg) });
     }
   }
 
@@ -304,7 +343,8 @@ export function analyzeSequence(values, opts = {}) {
         formula: `${nm}_${nvar} = ${coefTerm(a1, `${rr && rr.q === 1 ? baseStr(r) : `(${rs})`}${sup(n0 === 1 ? `${nvar}−1` : `${nvar}−${n0}`)}`)}`,
         extra: Math.abs(r) < 1 ? `|r| < 1 이므로 수렴하고, 무한합은 ${pretty(a1 / (1 - r))} 입니다.`
           : `|r| ≥ 1 이므로 발산합니다.`,
-        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))), confidence: 1 });
+        predict, next: [1, 2, 3].map((k) => predict(idx(v.length - 1 + k))),
+        confidence: conf(ratios.length) });
     }
   }
 
@@ -328,7 +368,22 @@ export function analyzeSequence(values, opts = {}) {
     }
   }
 
-  // 5) 선형 점화식(고차)
+  // 5) 주기
+  for (let p = 1; p <= Math.floor(v.length / 2); p++) {
+    let ok = true;
+    for (let i = 0; i + p < v.length; i++) if (!REL(v[i] - v[i + p], scale)) { ok = false; break; }
+    if (ok) {
+      push({ type: 'periodic', title: '주기수열',
+        detail: `주기가 ${p} 입니다: ${v.slice(0, p).map((x) => pretty(x)).join(', ')} 가 반복됩니다.`,
+        formula: `${nm}_${nvar} = ${nm}_{${nvar}+${p}}`,
+        predict: (n) => v[(n - n0) % p],
+        next: [0, 1, 2].map((k) => v[(v.length + k) % p]),
+        confidence: conf(v.length - p) });
+      break;
+    }
+  }
+
+  // 6) 선형 점화식(고차)
   if (v.length >= 6) {
     const rec = findLinearRecurrence(v);
     // 다항식·등차·등비·등차등비는 이미 자기 자신을 설명하는 점화식을 함의하므로
@@ -368,20 +423,6 @@ export function analyzeSequence(values, opts = {}) {
     }
   }
 
-  // 6) 주기
-  for (let p = 1; p <= Math.floor(v.length / 2); p++) {
-    let ok = true;
-    for (let i = 0; i + p < v.length; i++) if (!REL(v[i] - v[i + p], scale)) { ok = false; break; }
-    if (ok) {
-      push({ type: 'periodic', title: '주기수열',
-        detail: `주기가 ${p} 입니다: ${v.slice(0, p).map((x) => pretty(x)).join(', ')} 가 반복됩니다.`,
-        formula: `${nm}_${nvar} = ${nm}_{${nvar}+${p}}`,
-        predict: (n) => v[(n - n0) % p],
-        next: [0, 1, 2].map((k) => v[(v.length + k) % p]), confidence: 1 });
-      break;
-    }
-  }
-
   // 7) 부호 교대
   if (v.length >= 4 && v.every((x, i) => (i === 0 ? true : x * v[i - 1] < 0))) {
     push({ type: 'alternating', title: '부호가 교대로 바뀜',
@@ -400,8 +441,8 @@ export function analyzeSequence(values, opts = {}) {
     }
   }
 
-  // 9) 그래도 못 찾았으면 함수족 적합
-  if (!findings.some((f) => f.confidence >= 0.9)) {
+  // 9) 정확한 규칙이 하나도 없을 때에만 함수족 적합으로 근사한다
+  if (!findings.some((f) => f.exact)) {
     const xs = v.map((_, i) => idx(i));
     const models = fitModels(xs, v, { variable: nvar, maxDegree: Math.min(4, v.length - 2) });
     const best = models[0];
@@ -411,11 +452,32 @@ export function analyzeSequence(values, opts = {}) {
         formula: best.formula.replace(/^y = /, `${nm}_${nvar} = `),
         predict: best.predict,
         next: [1, 2, 3].map((k) => best.predict(idx(v.length - 1 + k))),
-        confidence: Math.min(0.85, best.r2) });
+        exact: false, confidence: Math.min(0.6, best.r2) });
     }
   }
 
-  return finish(findings, v, n0, nm, opts, shiftStr);
+  return withNote(finish(findings, v, n0, nm, opts, shiftStr), dropped, n0, v.length);
+}
+
+function withNote(out, dropped, n0, len) {
+  if (dropped) {
+    out.note = `값이 없거나 발산한 항 ${dropped}개는 빼고, ${n0}번째 항부터 이어지는 ${len}개만 보았습니다.`;
+  }
+  return out;
+}
+
+/** 유한한 값이 연속으로 이어지는 가장 긴 구간 */
+function longestFiniteRun(values) {
+  let best = { start: 0, values: [] };
+  let i = 0;
+  while (i < values.length) {
+    if (typeof values[i] !== 'number' || !isFinite(values[i])) { i++; continue; }
+    let j = i;
+    while (j < values.length && typeof values[j] === 'number' && isFinite(values[j])) j++;
+    if (j - i > best.values.length) best = { start: i, values: values.slice(i, j) };
+    i = j;
+  }
+  return best;
 }
 
 function closedForm(v, n0, roots, nm, nvar) {
@@ -464,7 +526,7 @@ function closedForm(v, n0, roots, nm, nvar) {
 }
 
 function finish(findings, v, n0, nm, opts) {
-  findings.sort((a, b) => b.confidence - a.confidence);
+  findings.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.confidence - a.confidence);
   const summary = summarize(findings, v, n0, nm);
   return { findings, terms: v, n0, name: nm, summary, opts };
 }
