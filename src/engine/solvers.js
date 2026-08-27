@@ -66,6 +66,58 @@ export function solveSystem2D(F, G, view, opts = {}) {
 }
 
 /**
+ * 방정식이 셋 이상인 연립. 모든 쌍의 교점을 후보로 모은 뒤
+ * "나머지 식까지 전부 만족하는" 점만 남긴다.
+ * (과결정계라 해가 없는 경우를 조용히 넘기지 않기 위함)
+ */
+export function solveSystemN(residuals, view, opts = {}) {
+  if (residuals.length < 2) return { points: [], curves: [] };
+  const traced = residuals.map((f) => traceImplicit(f, view, opts));
+  const scale = Math.max(view.xmax - view.xmin, view.ymax - view.ymin);
+  const candidates = [];
+  for (let i = 0; i < residuals.length; i++) {
+    for (let j = i + 1; j < residuals.length; j++) {
+      candidates.push(...polylineIntersections(traced[i].polylines, traced[j].polylines));
+      for (const p of traced[i].points) candidates.push(p);
+      for (const p of traced[j].points) candidates.push(p);
+    }
+  }
+  const out = [];
+  for (const c of candidates) {
+    // 두 식으로 정련한 뒤 전체 식을 검사
+    let q = c;
+    for (let i = 0; i < residuals.length && q; i++) {
+      for (let j = i + 1; j < residuals.length; j++) {
+        const r = newton2D(residuals[i], residuals[j], q[0], q[1]);
+        if (r) { q = r; break; }
+      }
+      break;
+    }
+    if (!q || !isFinite(q[0]) || !isFinite(q[1])) continue;
+    if (!residuals.every((f) => Math.abs(f(q[0], q[1])) < 1e-7 * Math.max(1, scale))) continue;
+    if (out.some((r) => Math.hypot(r[0] - q[0], r[1] - q[1]) < scale * 1e-6)) continue;
+    out.push(q);
+  }
+  return { points: out, curves: traced };
+}
+
+/**
+ * 한 변수 연립: 각 식의 근을 구해 공통근만 남긴다.
+ * (sin x = 0 ∧ cos x = −1 처럼 곡선 교점으로는 풀 수 없는 형태)
+ */
+export function intersectRoots(fs, lo, hi, samples = 4000) {
+  if (!fs.length) return [];
+  const tol = (hi - lo) * 1e-6;
+  let acc = findRoots(fs[0], lo, hi, samples);
+  for (let i = 1; i < fs.length; i++) {
+    const rs = findRoots(fs[i], lo, hi, samples);
+    acc = acc.filter((a) => rs.some((b2) => Math.abs(a - b2) < tol));
+  }
+  // 남은 근을 모든 식으로 한 번 더 검증
+  return acc.filter((x) => fs.every((f) => Math.abs(f(x)) < 1e-6 * Math.max(1, Math.abs(x))));
+}
+
+/**
  * y=f(x) 와 y=g(x) 의 교점.
  */
 export function intersectFunctions(f, g, xmin, xmax) {

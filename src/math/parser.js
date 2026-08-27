@@ -336,7 +336,18 @@ export function freeVars(node, out = new Set()) {
   switch (node.type) {
     case 'var': out.add(node.name); break;
     case 'index': freeVars(node.base, out); freeVars(node.index, out); break;
-    case 'call': node.args.forEach((a) => freeVars(a, out)); break;
+    case 'call': {
+      node.args.forEach((a) => freeVars(a, out));
+      // sum/prod/integral 의 둘째 인자는 묶인 변수이므로 자유변수가 아니다
+      if (['sum', 'prod'].includes(node.name) && node.args.length === 4
+          && node.args[1].type === 'var') out.delete(node.args[1].name);
+      if (node.name === 'integral') {
+        // 4인자면 둘째가 적분변수, 3인자면 x 가 묶인 변수
+        if (node.args.length === 4 && node.args[1].type === 'var') out.delete(node.args[1].name);
+        else if (node.args.length === 3) out.delete('x');
+      }
+      break;
+    }
     case 'bin': case 'cmp': case 'logic': freeVars(node.a, out); freeVars(node.b, out); break;
     case 'un': freeVars(node.a, out); break;
     case 'list': case 'tuple': node.items.forEach((a) => freeVars(a, out)); break;

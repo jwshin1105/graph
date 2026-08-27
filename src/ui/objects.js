@@ -6,7 +6,7 @@ import { derivative } from '../math/derivative.js';
 import { FUNCTIONS } from '../math/functions.js';
 import { traceImplicit } from '../engine/implicit.js';
 import { sampleFunction, sampleParametric, samplePolar } from '../engine/sampler.js';
-import { solve1D, solveSystem2D, regionMask } from '../engine/solvers.js';
+import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask } from '../engine/solvers.js';
 import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
@@ -47,16 +47,28 @@ export function createObject(source, ctx, id, colorIndex) {
 }
 
 function classify(obj, asts, ctx) {
+  // ';' 로 붙인 조각 중 "0 <= t <= 6π" 꼴은 매개변수 범위 지정으로 떼어 낸다
+  const ranges = [];
+  const rest = asts.filter((a) => {
+    const r = asRange(a);
+    if (r) { ranges.push(r); return false; }
+    return true;
+  });
+  if (rest.length) asts = rest;
   const main = asts[asts.length - 1];
   obj.asts = asts;
+  obj.ranges = ranges;
 
   // ── 수열 정의: a_n = …  (앞선 조각들은 초기값 a_1 = 1 처럼 취급)
   const seqDef = asts.find((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index');
   if (seqDef) return buildSequence(obj, asts, ctx);
 
   // ── 함수 정의: f(x) = …
+  const distinctVarArgs = (n) =>
+    n.type === 'call' && n.args.length > 0 && n.args.every((p) => p.type === 'var')
+    && new Set(n.args.map((p) => p.name)).size === n.args.length;
   if (main.type === 'cmp' && main.op === '=' && main.a.type === 'call' && !isBuiltin(main.a.name)
-      && main.a.args.every((p) => p.type === 'var')) {
+      && distinctVarArgs(main.a) && !ctx.defs.has(main.a.name)) {
     const name = main.a.name;
     const params = main.a.args.map((p) => p.name);
     ctx.defs.set(name, { params, body: main.b, compiled: null });
@@ -101,13 +113,13 @@ function classify(obj, asts, ctx) {
       return obj;
     }
     const p = [...free][0];
-    if (free.size === 1 && ANGLE_VARS.has(p)) {
+    if (free.size === 1) {
       obj.kind = 'parametric';
       obj.varName = p;
       obj.fx = compile(main.items[0], ctx);
       obj.fy = compile(main.items[1], ctx);
       obj.label = `(${format(main.items[0])}, ${format(main.items[1])})`;
-      obj.range = [0, 2 * Math.PI];
+      obj.range = pickRange(ranges, p) || autoParametricRange(obj);
       return obj;
     }
   }
@@ -139,19 +151,38 @@ function classify(obj, asts, ctx) {
       obj.kind = 'polar';
       obj.fr = compile(main.b, ctx);
       obj.varName = [...inner].find((v) => ANGLE_VARS.has(v)) || 'θ';
-      obj.range = [0, 2 * Math.PI];
+      obj.range = pickRange(ranges, obj.varName) || autoPolarRange(obj);
       obj.label = `r = ${format(main.b)}`;
       return obj;
     }
   }
 
   // ── 연립방정식 (등식 ∧ 등식) → 해는 점열
-  if (main.type === 'logic' && main.op === 'and' && collectEqs(main).length >= 2
+  if (main.type === 'logic' && main.op === 'and' && !isRegion(main)
+      && collectEqs(main).length >= 2
       && [...free].every((v) => v === 'x' || v === 'y')) {
     obj.kind = 'system';
     obj.residuals = residualList(main, ctx);
+    obj.vars = free;
+    // 변수가 하나뿐인 연립(sin x = 0 ∧ cos x = −1)은 곡선 교점이 아니라 공통근 문제다
+    obj.oneVar = free.size <= 1 ? ([...free][0] || 'x') : null;
     obj.label = format(main);
     return obj;
+  }
+
+  // ── 등식들의 합집합 (A = B or C = D) → 각 해집합을 모두 그린다
+  if (main.type === 'logic' && main.op === 'or' && !isRegion(main)) {
+    const parts = collectEqs(main);
+    if (parts.length >= 2) {
+      obj.kind = 'union';
+      obj.children = parts.map((ast) => {
+        const child = { kind: 'unknown', error: null, label: format(ast) };
+        try { classify(child, [ast], ctx); } catch (e) { child.error = e.message; }
+        return child;
+      });
+      obj.label = format(main);
+      return obj;
+    }
   }
 
   // ── 부등식 / 논리 결합 → 영역
@@ -183,6 +214,13 @@ function classify(obj, asts, ctx) {
       return obj;
     }
     if (free.has('x') && free.has('y')) {
+      const extra = [...free].filter((v) => v !== 'x' && v !== 'y');
+      if (extra.length) {
+        obj.kind = 'error';
+        obj.error = `정해지지 않은 기호가 있습니다: ${extra.join(', ')}. `
+          + `'${extra[0]} = 1' 처럼 값을 먼저 정의해 주세요.`;
+        return obj;
+      }
       obj.kind = 'implicit';
       obj.f = residual(main, ctx);
       obj.label = format(main);
@@ -233,6 +271,63 @@ function classify(obj, asts, ctx) {
   obj.kind = 'unknown';
   obj.error = '어떤 그래프인지 판단하지 못했습니다.';
   return obj;
+}
+
+/** "a <= t <= b" 또는 "a < t < b" 를 [a, b] 범위로 해석 */
+function asRange(node) {
+  if (node.type !== 'logic' || node.op !== 'and') return null;
+  const { a, b } = node;
+  if (a.type !== 'cmp' || b.type !== 'cmp') return null;
+  const varOf = (n) => (n.type === 'var' ? n.name : null);
+  const name = varOf(a.b) || varOf(b.a);
+  if (!name || !ANGLE_VARS.has(name)) return null;
+  const ctx0 = makeContext();
+  const num = (n) => {
+    try {
+      const v = compile(n, ctx0)({});
+      return typeof v === 'number' && isFinite(v) ? v : null;
+    } catch { return null; }
+  };
+  const lo = num(a.a);
+  const hi = num(b.b);
+  if (lo === null || hi === null || !(hi > lo)) return null;
+  return { name, range: [lo, hi] };
+}
+
+function pickRange(ranges, name) {
+  const hit = ranges.find((r) => r.name === name) || ranges[0];
+  return hit ? hit.range : null;
+}
+
+/** 극좌표 r(θ) 의 주기를 찾아 한 바퀴가 온전히 그려지는 범위를 고른다 */
+function autoPolarRange(obj) {
+  const v = obj.varName;
+  const r = (t) => obj.fr({ [v]: t });
+  for (let k = 1; k <= 8; k++) {
+    const T = 2 * Math.PI * k;
+    let ok = true;
+    for (let i = 0; i <= 24; i++) {
+      const t = (2 * Math.PI * i) / 24;
+      const a = r(t), b = r(t + T);
+      if (!isFinite(a) && !isFinite(b)) continue;
+      if (!isFinite(a) || !isFinite(b) || Math.abs(a - b) > 1e-7 * Math.max(1, Math.abs(a))) {
+        ok = false; break;
+      }
+    }
+    if (ok) return [0, T];
+  }
+  return [0, 8 * Math.PI];        // 나선처럼 주기가 없으면 여러 바퀴를 그린다
+}
+
+/** 매개변수 곡선이 [0,2π] 에서 닫히면 그대로, 아니면 넉넉한 범위 */
+function autoParametricRange(obj) {
+  const v = obj.varName;
+  const at = (t) => [obj.fx({ [v]: t }), obj.fy({ [v]: t })];
+  const p0 = at(0);
+  const p1 = at(2 * Math.PI);
+  const closed = p0.every(isFinite) && p1.every(isFinite)
+    && Math.hypot(p0[0] - p1[0], p0[1] - p1[1]) < 1e-7 * (1 + Math.hypot(...p0));
+  return closed ? [0, 2 * Math.PI] : [-4 * Math.PI, 4 * Math.PI];
 }
 
 function collectEqs(node, includeIneq = false) {
@@ -304,6 +399,9 @@ function buildSequence(obj, asts, ctx) {
 export function computeObject(obj, bounds) {
   const b = bounds;
   switch (obj.kind) {
+    case 'union2': {
+      return { polylines: [], points: [] };
+    }
     case 'function': {
       const f = obj.substitute
         ? (x) => obj.fn({ [obj.substitute]: x })
@@ -317,10 +415,16 @@ export function computeObject(obj, bounds) {
     }
     case 'implicit': {
       const r = traceImplicit((x, y) => obj.f({ x, y }), b);
-      return { polylines: r.polylines, points: r.points, isolated: r.points };
+      return {
+        polylines: r.polylines, points: r.points, isolated: r.points,
+        empty: !r.polylines.length && !r.points.length,
+        dense: r.points.length > 400, total: r.points.length,
+      };
     }
     case 'region': {
-      const mask = regionMask((x, y) => obj.pred({ x, y }), b);
+      // 화면 폭에 맞춰 채우기 해상도를 정한다(픽셀 3칸당 1셀)
+      const cols = Math.max(160, Math.min(420, Math.round((b.width || 800) / 3)));
+      const mask = regionMask((x, y) => obj.pred({ x, y }), b, cols);
       const polylines = [];
       for (const bf of obj.boundaries) {
         const t = traceImplicit((x, y) => bf({ x, y }), b, { findIsolated: false });
@@ -329,22 +433,52 @@ export function computeObject(obj, bounds) {
       return { mask, polylines, dash: [6, 4], points: [] };
     }
     case 'system': {
-      const [F, G] = obj.residuals;
-      const s = solveSystem2D((x, y) => F({ x, y }), (x, y) => G({ x, y }), b);
+      if (obj.oneVar) {
+        const v = obj.oneVar;
+        const lo = v === 'y' ? b.ymin : b.xmin;
+        const hi = v === 'y' ? b.ymax : b.xmax;
+        const roots = intersectRoots(obj.residuals.map((f) => (t) => f({ [v]: t })), lo, hi);
+        const pts = roots.map((t) => (v === 'y' ? [0, t] : [t, 0]));
+        return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
+      }
+      const fns = obj.residuals.map((f) => (x, y) => f({ x, y }));
+      const s = fns.length === 2
+        ? solveSystem2D(fns[0], fns[1], b)
+        : solveSystemN(fns, b);
       return {
         points: s.points,
-        polylines: [...s.curves[0].polylines, ...s.curves[1].polylines],
+        polylines: s.curves.flatMap((c) => c.polylines),
         ghost: true,
         isolated: s.points,
+        empty: s.points.length === 0,
       };
+    }
+    case 'union': {
+      const out = { polylines: [], points: [], isolated: [] };
+      for (const child of obj.children || []) {
+        if (child.error) continue;
+        const d = computeObject(child, bounds);
+        out.polylines.push(...(d.polylines || []));
+        out.points.push(...(d.points || []));
+        out.isolated.push(...(d.isolated || []));
+      }
+      out.empty = !out.polylines.length && !out.points.length;
+      return out;
     }
     case 'equation1d': {
       const v = obj.varName;
       const lo = v === 'y' ? b.ymin : b.xmin;
       const hi = v === 'y' ? b.ymax : b.xmax;
-      const roots = solve1D((t) => obj.f({ [v]: t }), lo, hi);
+      const SAMPLES = 4000;
+      const roots = solve1D((t) => obj.f({ [v]: t }), lo, hi, SAMPLES);
       const pts = v === 'y' ? roots.map(([t]) => [0, t]) : roots;
-      return { points: pts, isolated: pts, polylines: [] };
+      // 표본 간격마다 근이 하나씩 잡히는 수준이면 해가 화면 해상도보다 촘촘하다는 뜻.
+      // 이때 보이는 점들은 전체 해의 일부일 뿐이므로 그렇다고 밝힌다.
+      const dense = pts.length > SAMPLES / 20;
+      return {
+        points: dense ? pts.filter((_, i) => i % Math.ceil(pts.length / 200) === 0) : pts,
+        isolated: pts, polylines: [], empty: pts.length === 0, dense, total: pts.length,
+      };
     }
     case 'point':
     case 'points':
@@ -358,18 +492,29 @@ export function computeObject(obj, bounds) {
     case 'parametric': {
       const [t0, t1] = obj.range;
       const v = obj.varName;
-      const r = sampleParametric((t) => obj.fx({ [v]: t }), (t) => obj.fy({ [v]: t }), t0, t1);
+      const r = sampleParametric(
+        (t) => obj.fx({ [v]: t }), (t) => obj.fy({ [v]: t }), t0, t1, paramOpts(b, t0, t1),
+      );
       return { polylines: r.polylines, points: [] };
     }
     case 'polar': {
       const [t0, t1] = obj.range;
       const v = obj.varName;
-      const r = samplePolar((t) => obj.fr({ [v]: t }), t0, t1);
+      const r = samplePolar((t) => obj.fr({ [v]: t }), t0, t1, paramOpts(b, t0, t1));
       return { polylines: r.polylines, points: [] };
     }
     default:
       return { polylines: [], points: [] };
   }
+}
+
+/** 매개변수 표본화 옵션: 화면 크기로 정밀도를, 매개변수 폭으로 표본 수를 정한다 */
+function paramOpts(b, t0, t1) {
+  const turns = Math.max(1, (t1 - t0) / (2 * Math.PI));
+  return {
+    samples: Math.min(6000, Math.round(400 * turns)),
+    xmin: b.xmin, xmax: b.xmax, ymin: b.ymin, ymax: b.ymax,
+  };
 }
 
 function swapXY(line) {
@@ -392,7 +537,28 @@ function sequenceTerms(obj, bounds) {
 // ── 분석 ────────────────────────────────────────────────────
 export function analyzeObject(obj, bounds, ctx) {
   try {
+    if (obj.data && obj.data.empty) {
+      return {
+        title: '해집합 분석',
+        lead: '보이는 범위 안에서는 이 식을 만족하는 점이 하나도 없습니다.',
+        findings: [{
+          type: 'empty', title: '해 없음', confidence: 1,
+          detail: '식 자체에 실수해가 없거나, 해가 지금 화면 밖에 있습니다. 축소해서 다시 확인해 보세요.',
+        }],
+        summary: '해 없음',
+      };
+    }
     switch (obj.kind) {
+      case 'union': {
+        const parts = (obj.children || []).map((c) => ({ c, r: analyzeObject(c, bounds, ctx) }));
+        return {
+          title: '합집합 해집합 분석',
+          lead: `${parts.length}개 식의 해를 모두 모은 집합입니다.`,
+          findings: parts.flatMap(({ c, r }) =>
+            (r?.findings || []).map((f) => ({ ...f, title: `[${c.label}] ${f.title}` }))),
+          summary: parts.map(({ c }) => c.label).join('  ∪  '),
+        };
+      }
       case 'function': return analyzeFunctionObject(obj, bounds, ctx);
       case 'functionY': {
         const r = analyzeFunction((y) => obj.fn({ y }), { xmin: bounds.ymin, xmax: bounds.ymax, name: 'x' });
@@ -408,6 +574,17 @@ export function analyzeObject(obj, bounds, ctx) {
       }
       case 'equation1d': {
         const d = computeObject(obj, bounds);
+        if (d.dense) {
+          return {
+            title: `방정식의 해 (${obj.varName} 에 대한 점열)`,
+            lead: `이 범위에는 해가 화면 해상도보다 촘촘하게 놓여 있습니다 (표본으로 잡힌 것만 ${d.total}개).`,
+            findings: [{
+              type: 'dense', title: '해가 너무 촘촘함', confidence: 1,
+              detail: '지금 보이는 점들은 전체 해의 일부만 표본으로 잡은 것이라, 이 상태의 간격으로 규칙을 말하면 틀립니다. 확대해서 다시 분석해 주세요.',
+            }],
+            summary: '해가 너무 촘촘함',
+          };
+        }
         const vals = d.points.map((p) => (obj.varName === 'y' ? p[1] : p[0]));
         const seq = analyzeSequence(vals, { name: obj.varName });
         const ps = analyzePointSet(d.points);

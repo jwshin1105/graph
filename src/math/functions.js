@@ -99,7 +99,15 @@ export const FUNCTIONS = {
   nCr: { arity: 2, fn: (n, r) => Math.round(factorial(n) / (factorial(r) * factorial(n - r))) },
   nPr: { arity: 2, fn: (n, r) => Math.round(factorial(n) / factorial(n - r)) },
   if: { arity: 3, fn: (c, a, b) => (c ? a : b) },
+  // 아래 셋은 컴파일러가 특수형으로 가로채 처리한다(인자를 지연 평가해야 하므로).
+  // 여기에 등록해 두는 것은 토크나이저·파서가 함수 이름으로 알아보게 하기 위함이다.
+  sum: { arity: -1, special: true, fn: () => NaN },
+  prod: { arity: -1, special: true, fn: () => NaN },
+  integral: { arity: -1, special: true, fn: () => NaN },
 };
+
+/** 인자를 지연 평가해야 하는 특수형 이름 */
+export const SPECIAL_FORMS = new Set(['sum', 'prod', 'integral']);
 
 export const CONSTANTS = {
   pi: Math.PI,

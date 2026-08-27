@@ -2,7 +2,7 @@
 // eval / new Function 을 쓰지 않으므로 안전하며, 플로팅에 필요한 수십만 회 호출에도
 // 충분히 빠르다.
 
-import { FUNCTIONS, CONSTANTS } from './functions.js';
+import { FUNCTIONS, CONSTANTS, SPECIAL_FORMS } from './functions.js';
 
 export class EvalError2 extends Error {}
 
@@ -106,6 +106,7 @@ function build(node, ctx) {
     }
     case 'call': {
       const name = node.name;
+      if (SPECIAL_FORMS.has(name)) return buildSpecial(node, ctx);
       const args = node.args.map((a) => build(a, ctx));
       const def = ctx.defs.get(name);
       if (def || (!FUNCTIONS[name] && !node.primes)) {
@@ -149,6 +150,79 @@ function build(node, ctx) {
     default:
       throw new EvalError2(`계산할 수 없는 노드: ${node.type}`);
   }
+}
+
+/**
+ * 합·곱·정적분처럼 "속변수를 묶는" 형태.
+ *   sum(k^2, k, 1, 10)        prod(k, k, 1, n)
+ *   integral(x^2, x, 0, 1)    integral(x^2, 0, 1)   ← 변수를 생략하면 x
+ */
+function buildSpecial(node, ctx) {
+  const name = node.name;
+  const a = node.args;
+  if (name === 'integral') {
+    const hasVar = a.length === 4;
+    const vname = hasVar && a[1].type === 'var' ? a[1].name : 'x';
+    const body = build(a[0], ctx);
+    const lo = build(a[hasVar ? 2 : 1], ctx);
+    const hi = build(a[hasVar ? 3 : 2], ctx);
+    return (env) => {
+      const sub = Object.create(env || null);
+      const f = (t) => { sub[vname] = t; return body(sub); };
+      return simpson(f, lo(env), hi(env));
+    };
+  }
+  if (a.length < 4) return () => NaN;
+  const vname = a[1].type === 'var' ? a[1].name : 'k';
+  const body = build(a[0], ctx);
+  const from = build(a[2], ctx);
+  const to = build(a[3], ctx);
+  const isSum = name === 'sum';
+  return (env) => {
+    const lo = Math.round(from(env));
+    const hi = Math.round(to(env));
+    if (!isFinite(lo) || !isFinite(hi) || hi - lo > 200000) return NaN;
+    const sub = Object.create(env || null);
+    let acc = isSum ? 0 : 1;
+    for (let k = lo; k <= hi; k++) {
+      sub[vname] = k;
+      const v = body(sub);
+      if (isSum) acc += v; else acc *= v;
+      if (!isFinite(acc)) return acc;
+    }
+    return acc;
+  };
+}
+
+/** 적응 심프슨 적분 */
+export function simpson(f, a, b, tol = 1e-10, depth = 20) {
+  if (!isFinite(a) || !isFinite(b)) return NaN;
+  if (a === b) return 0;
+  const sign = b < a ? -1 : 1;
+  if (b < a) [a, b] = [b, a];
+  const S = (l, r, fl, fm, fr) => ((r - l) / 6) * (fl + 4 * fm + fr);
+  const rec = (l, r, fl, fm, fr, whole, d) => {
+    const m = (l + r) / 2;
+    const lm = (l + m) / 2, rm = (m + r) / 2;
+    const flm = f(lm), frm = f(rm);
+    const left = S(l, m, fl, flm, fm);
+    const right = S(m, r, fm, frm, fr);
+    if (d <= 0 || Math.abs(left + right - whole) < 15 * tol) return left + right + (left + right - whole) / 15;
+    return rec(l, m, fl, flm, fm, left, d - 1) + rec(m, r, fm, frm, fr, right, d - 1);
+  };
+  const fa = f(a), fb = f(b), fm = f((a + b) / 2);
+  if (![fa, fb, fm].every(isFinite)) {
+    // 끝점이 특이하면 조금 안쪽으로 밀어 넣고 리만 합으로 근사
+    const N = 4000;
+    let acc = 0, cnt = 0;
+    for (let i = 0; i < N; i++) {
+      const t = a + ((b - a) * (i + 0.5)) / N;
+      const v = f(t);
+      if (isFinite(v)) { acc += v; cnt++; }
+    }
+    return cnt ? sign * acc * ((b - a) / N) * (N / cnt) : NaN;
+  }
+  return sign * rec(a, b, fa, fm, fb, S(a, b, fa, fm, fb), depth);
 }
 
 function callUser(def, values, ctx, outerEnv) {

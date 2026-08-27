@@ -22,6 +22,13 @@ const EXAMPLES = [
   ['y < x^2 - 2', '부등식 영역'],
   ['|x| + |y| = 2', '절댓값 방정식'],
   ['tan x = x', '초월방정식의 근을 점열로'],
+  ['x^2+y^2=4 or y=x', '두 해집합의 합집합'],
+  ['sin x=0 and cos x=-1', '한 변수 연립방정식의 공통근'],
+  ['r = θ; 0 <= θ <= 8π', '범위를 지정한 나선'],
+  ['y = sum(x^k/fact(k), k, 0, 8)', 'e^x 의 테일러 부분합 (Σ 지원)'],
+  ['y = integral(sin(u), u, 0, x)', '정적분으로 정의한 함수'],
+  ['y = floor(x)', '계단함수 — 도약에서 선을 끊는다'],
+  ['x^3 + y^3 = 3x y', '데카르트의 잎 (매듭점 포함)'],
 ];
 
 const START = ['sin(x)^2 + sin(y)^2 = 0', 'y = x^3 - 3x'];
@@ -230,6 +237,11 @@ class App {
         if (d) {
           if (d.polylines?.length) meta.innerHTML += `<span class="tag">곡선 ${d.polylines.length}가지</span>`;
           if (d.isolated?.length) meta.innerHTML += `<span class="tag pt">점 ${d.isolated.length}개</span>`;
+          if (d.empty) meta.innerHTML += '<span class="tag none">해 없음</span>';
+          if (d.dense) meta.innerHTML += `<span class="tag none">해가 촘촘함(${d.total}+)</span>`;
+        }
+        if (o.kind === 'value' || o.kind === 'constant') {
+          meta.innerHTML += `<span class="tag pt">${escapeHtml(o.label)}</span>`;
         }
         if (o.label && o.label !== o.source) {
           const s = document.createElement('span');
@@ -470,6 +482,7 @@ const KIND_LABEL = {
   function: '함수', functionY: 'x=f(y)', implicit: '음함수', region: '영역',
   system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
   sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
+  union: '합집합',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
 };
 
