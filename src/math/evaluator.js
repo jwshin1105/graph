@@ -1,0 +1,199 @@
+// AST → 클로저 트리 컴파일러.
+// eval / new Function 을 쓰지 않으므로 안전하며, 플로팅에 필요한 수십만 회 호출에도
+// 충분히 빠르다.
+
+import { FUNCTIONS, CONSTANTS } from './functions.js';
+
+export class EvalError2 extends Error {}
+
+/**
+ * @typedef {Object} Context
+ * @property {Map<string, {params:string[], body:Object}>} defs  사용자 정의 함수/변수
+ * @property {Map<string, {values:Map<number,number>, get:(n:number)=>number}>} seqs 수열
+ */
+
+export function makeContext() {
+  return { defs: new Map(), seqs: new Map() };
+}
+
+const BINOPS = {
+  '+': (a, b) => a + b,
+  '-': (a, b) => a - b,
+  '*': (a, b) => a * b,
+  '/': (a, b) => a / b,
+  '^': (a, b) => {
+    // 음수의 홀수분모 유리수 거듭제곱을 실수로 확장: (-8)^(1/3) = -2
+    if (a < 0 && !Number.isInteger(b)) {
+      const inv = 1 / b;
+      const r = Math.round(inv);
+      if (Math.abs(inv - r) < 1e-9 && r % 2 !== 0) return -Math.pow(-a, b);
+      return NaN;
+    }
+    return Math.pow(a, b);
+  },
+};
+
+const CMPOPS = {
+  '=': (a, b) => (Math.abs(a - b) < 1e-12 ? 1 : 0),
+  '<': (a, b) => (a < b ? 1 : 0),
+  '>': (a, b) => (a > b ? 1 : 0),
+  '<=': (a, b) => (a <= b ? 1 : 0),
+  '>=': (a, b) => (a >= b ? 1 : 0),
+  '!=': (a, b) => (a !== b ? 1 : 0),
+};
+
+/**
+ * AST 를 (env) => number 형태의 함수로 컴파일한다.
+ * env 는 { x: 1, y: 2 } 같은 평범한 객체.
+ */
+export function compile(node, ctx = makeContext()) {
+  return build(node, ctx);
+}
+
+function build(node, ctx) {
+  switch (node.type) {
+    case 'num': {
+      const v = node.value;
+      return () => v;
+    }
+    case 'var': {
+      const name = node.name;
+      if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) {
+        const v = CONSTANTS[name];
+        return () => v;
+      }
+      return (env) => {
+        if (env && name in env) return env[name];
+        const d = ctx.defs.get(name);
+        if (d && d.params.length === 0) return d.compiled ? d.compiled(env) : NaN;
+        return NaN;
+      };
+    }
+    case 'un': {
+      const a = build(node.a, ctx);
+      return (env) => -a(env);
+    }
+    case 'bin': {
+      const f = BINOPS[node.op];
+      const a = build(node.a, ctx);
+      const b = build(node.b, ctx);
+      return (env) => f(a(env), b(env));
+    }
+    case 'cmp': {
+      const f = CMPOPS[node.op];
+      const a = build(node.a, ctx);
+      const b = build(node.b, ctx);
+      return (env) => f(a(env), b(env));
+    }
+    case 'logic': {
+      const a = build(node.a, ctx);
+      const b = build(node.b, ctx);
+      return node.op === 'and'
+        ? (env) => (a(env) && b(env) ? 1 : 0)
+        : (env) => (a(env) || b(env) ? 1 : 0);
+    }
+    case 'index': {
+      const name = node.base.type === 'var' ? node.base.name : null;
+      const idx = build(node.index, ctx);
+      return (env) => {
+        const n = idx(env);
+        const seq = name && ctx.seqs.get(name);
+        if (seq) return seq.get(n);
+        const d = name && ctx.defs.get(name);
+        if (d && d.params.length === 1) return callUser(d, [n], ctx, env);
+        return NaN;
+      };
+    }
+    case 'call': {
+      const name = node.name;
+      const args = node.args.map((a) => build(a, ctx));
+      const def = ctx.defs.get(name);
+      if (def || (!FUNCTIONS[name] && !node.primes)) {
+        return (env) => {
+          const d = ctx.defs.get(name);
+          if (!d) {
+            const seq = ctx.seqs.get(name);
+            if (seq && args.length === 1) return seq.get(args[0](env));
+            return NaN;
+          }
+          return callUser(d, args.map((a) => a(env)), ctx, env);
+        };
+      }
+      if (node.primes) {
+        // f'(x): 사용자 정의 함수의 수치 도함수 (기호 미분은 상위 계층에서 처리)
+        const order = node.primes;
+        return (env) => {
+          const d = ctx.defs.get(name);
+          if (!d) return NaN;
+          const x = args[0](env);
+          return numDeriv((t) => callUser(d, [t], ctx, env), x, order);
+        };
+      }
+      const spec = FUNCTIONS[name];
+      const fn = spec.fn;
+      if (spec.arity === 1 && args.length === 1) {
+        const a0 = args[0];
+        return (env) => fn(a0(env));
+      }
+      if (spec.arity === 2 && args.length === 2) {
+        const [a0, a1] = args;
+        return (env) => fn(a0(env), a1(env));
+      }
+      return (env) => fn(...args.map((a) => a(env)));
+    }
+    case 'tuple':
+    case 'list': {
+      const items = node.items.map((a) => build(a, ctx));
+      return (env) => items.map((f) => f(env));
+    }
+    default:
+      throw new EvalError2(`계산할 수 없는 노드: ${node.type}`);
+  }
+}
+
+function callUser(def, values, ctx, outerEnv) {
+  if (!def.compiled) def.compiled = build(def.body, ctx);
+  const env = Object.create(outerEnv || null);
+  def.params.forEach((p, i) => {
+    env[p] = values[i];
+  });
+  return def.compiled(env);
+}
+
+export function numDeriv(f, x, order = 1) {
+  const h = Math.max(1e-5, Math.abs(x) * 1e-6);
+  if (order === 1) return (f(x + h) - f(x - h)) / (2 * h);
+  if (order === 2) return (f(x + h) - 2 * f(x) + f(x - h)) / (h * h);
+  return numDeriv((t) => numDeriv(f, t, order - 1), x, 1);
+}
+
+/**
+ * 등식/부등식 AST 를 "좌변 - 우변" 실함수로 바꾼다.
+ * 음함수 그래프(등고선)와 고립해 탐색이 모두 이 잔차 함수 위에서 동작한다.
+ */
+export function residual(node, ctx) {
+  if (node.type === 'cmp') {
+    const a = build(node.a, ctx);
+    const b = build(node.b, ctx);
+    return (env) => a(env) - b(env);
+  }
+  return build(node, ctx);
+}
+
+/** 여러 등식을 한 번에 잔차 벡터로 (연립방정식용) */
+export function residualList(node, ctx) {
+  const out = [];
+  (function walk(n) {
+    if (n.type === 'logic' && n.op === 'and') {
+      walk(n.a);
+      walk(n.b);
+    } else out.push(residual(n, ctx));
+  })(node);
+  return out;
+}
+
+/** 논리식/부등식을 참·거짓 판정 함수로 */
+export function predicate(node, ctx) {
+  const f = build(node, ctx);
+  return (env) => !!f(env);
+}
