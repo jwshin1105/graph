@@ -210,3 +210,51 @@ test('표본을 맞춰 본 이차곡선은 "위에 놓인다" 라고만 말한�
   assert.match(f.detail, /위에 놓입니다/);
   assert.doesNotMatch(f.detail, /해집합이/);
 });
+
+// ── 수열: 점화식과 초기값의 순서 ────────────────────────
+test('점화식을 먼저 써도 초기값을 알아본다', () => {
+  const terms = (src) => {
+    const o = make(src);
+    return computeObject(o, B).points.slice(0, 7).map((p) => p[1]);
+  };
+  const fib = [1, 1, 2, 3, 5, 8, 13];
+  assert.deepEqual(terms('a_1 = 1; a_2 = 1; a_n = a_{n-1} + a_{n-2}'), fib);
+  assert.deepEqual(terms('a_n = a_{n-1} + a_{n-2}; a_1 = 1; a_2 = 1'), fib);
+  assert.deepEqual(terms('b_n = 3 b_{n-1}; b_1 = 2').slice(0, 4), [2, 6, 18, 54]);
+});
+
+// ── 영역의 넓이는 잰 만큼만 적는다 ──────────────────────
+test('영역의 넓이를 경계 칸까지 잘게 재어 맞춘다', () => {
+  const areaOf = (src) => {
+    const ctx = createContext();
+    const o = make(src, ctx);
+    return analyzeObject(o, B, ctx).findings.find((f) => f.value !== undefined).value;
+  };
+  const rel = (src, truth) => Math.abs(areaOf(src) - truth) / truth;
+  assert.ok(rel('|x| + |y| < 1', 2) < 3e-3, '마름모');
+  assert.ok(rel('x^2 + y^2 < 1', Math.PI) < 3e-3, '원');
+  assert.ok(rel('y > x^2 and y < 4', 32 / 3) < 3e-3, '포물선 띠');
+  assert.ok(rel('x^2 + y^2 < 0.25', Math.PI / 4) < 3e-3, '작은 원');
+  assert.ok(rel('y < x and y > -x and x < 3', 9) < 3e-3, '삼각형');
+});
+
+test('적은 자릿수가 실제 정확도를 넘지 않는다', () => {
+  // 유효숫자 셋까지만 적는다 — 적힌 마지막 자리는 반올림해서 맞아야 한다
+  const cases = [
+    ['y > x^2 and y < 4', 32 / 3],
+    ['|x| + |y| < 1', 2],
+    ['x^2 + y^2 < 1', Math.PI],
+    ['x^2/4 + y^2/9 < 1', 6 * Math.PI],
+    ['x^2 + y^2 < 0.25', Math.PI / 4],
+    ['y < x and y > -x and x < 3', 9],
+  ];
+  for (const [src, truth] of cases) {
+    const ctx = createContext();
+    const o = make(src, ctx);
+    const f = analyzeObject(o, B, ctx).findings.find((x) => x.value !== undefined);
+    const shown = Number(f.detail.match(/약 ([\d.]+)/)[1]);
+    const dec = (String(shown).split('.')[1] || '').length;
+    assert.ok(Math.abs(shown - truth) <= 0.5 * Math.pow(10, -dec) + 1e-12,
+      `${src}: ${shown} 은 소수 ${dec}자리까지 맞다고 하기 어렵다 (참값 ${truth})`);
+  }
+});

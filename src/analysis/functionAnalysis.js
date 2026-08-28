@@ -427,9 +427,11 @@ function asymptotes(f, xmin, xmax, holes) {
     const at = dir > 0 ? '+∞' : '−∞';
     if (Math.abs(m) < 1e-9) {
       // 진동하는 함수(sin x 등)가 우연히 같은 값에 걸리는 것을 막기 위해
-      // 여러 배율에서 값이 모두 같은 극한으로 모이는지 확인한다
+      // 여러 배율에서 값이 모두 같은 극한으로 모이는지 확인한다.
+      // 배율은 **정수가 아닌 자리**로 잡는다 — 10⁵, 10⁷ 처럼 짝수만 짚으면
+      // mod(x, 2) 나 gcd(x, 6) 이 늘 같은 값을 내놓아 없는 점근선이 생긴다.
       const tol = 1e-6 * Math.max(1, Math.abs(y1));
-      const converges = [2, 4, 8, 16, 32, 128].every((k) => {
+      const converges = [2, 3, 5, 7, 11, 23, 97].every((k) => {
         const y = f(x1 / k);
         return isFinite(y) && Math.abs(y - y1) < tol;
       });

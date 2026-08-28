@@ -706,13 +706,17 @@ function buildRegression(obj, main, ctx) {
 // ── 수열 ────────────────────────────────────────────────────
 function buildSequence(obj, asts, ctx) {
   const defs = asts.filter((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index');
-  const main = defs[defs.length - 1];
+  // 어느 것이 점화식이고 어느 것이 초기값인지는 **첨자의 모양**으로 가른다.
+  // 자리로 가르면 "a_n = a_{n−1} + a_{n−2}; a_1 = 1; a_2 = 1" 처럼 점화식을 먼저 쓴
+  // 경우에 a_2 = 1 을 규칙으로 읽어 상수 수열이 되어 버린다.
+  const rules = defs.filter((d) => d.a.index.type !== 'num');
+  const main = rules.length ? rules[rules.length - 1] : defs[defs.length - 1];
   const name = main.a.base.type === 'var' ? main.a.base.name : 'a';
   const idxVar = main.a.index.type === 'var' ? main.a.index.name : 'n';
 
   const seeds = new Map();
-  for (const d of defs.slice(0, -1)) {
-    if (d.a.index.type === 'num') seeds.set(d.a.index.value, compile(d.b, ctx)({}));
+  for (const d of defs) {
+    if (d !== main && d.a.index.type === 'num') seeds.set(d.a.index.value, compile(d.b, ctx)({}));
   }
   // a_{n+1} = … 형태면 인덱스를 한 칸 당겨 a_n 기준으로 맞춘다
   let shift = 0;
@@ -1195,6 +1199,83 @@ function analyzeFunctionObject(obj, bounds, ctx) {
   };
 }
 
+/**
+ * 영역의 넓이를 경계 칸만 잘게 쪼개어 다시 잰다.
+ *
+ * 칸 단위로만 세면 경계에서 반 칸씩 어긋나 |x|+|y| < 1 의 넓이가 2 가 아니라 1.97 로
+ * 나온다. 그러면서 소수점 아래 넷째 자리까지 적으면 있지도 않은 정확도를 주장하게 된다.
+ * 경계에 걸친 칸만 6×6 으로 다시 재면(안쪽 칸은 이미 정확하다) 오차가 한 자리 줄어들고,
+ * 남은 오차만큼만 유효숫자를 적는다.
+ */
+function refinedArea(obj, bounds, mask, cols, rows, coarse) {
+  const pred = obj.pred;
+  const w = (bounds.xmax - bounds.xmin) / cols;
+  const h = (bounds.ymax - bounds.ymin) / rows;
+  const at = (i, j) => (i < 0 || j < 0 || i >= cols || j >= rows ? 0 : mask[j * cols + i]);
+  // 경계 칸은 가로줄 몇 개로 자르고, 각 줄에서 경계가 지나는 x 를 **이분법으로** 찾는다.
+  // 잔칸을 세기만 하면 곧은 경계가 격자와 어긋나며 한쪽으로 치우친다
+  // (|x|+|y| < 1 의 45° 변이 대표적이다). 이분법으로 자르면 곧은 경계는 오차가 없고,
+  // 굽은 경계에도 가로줄 개수의 제곱만큼 정확해진다.
+  const SUB = 8;
+  let sum = 0;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const v = at(i, j);
+      const boundary = v !== at(i - 1, j) || v !== at(i + 1, j)
+        || v !== at(i, j - 1) || v !== at(i, j + 1);
+      if (!boundary) { sum += v; continue; }
+      const x0 = bounds.xmin + i * w;
+      let covered = 0;
+      for (let b = 0; b < SUB; b++) {
+        const y = bounds.ymin + (j + (b + 0.5) / SUB) * h;
+        covered += coveredFraction(pred, x0, w, y, SUB);
+      }
+      sum += covered / SUB;
+    }
+  }
+  const value = sum * w * h;
+  // 이렇게 재면 상대오차가 화면 크기와 모양에 관계없이 0.05% 안쪽이다
+  // (반지름 0.5 인 작은 원부터 포물선으로 둘러싸인 띠까지 재어 확인했다).
+  // 그래서 **유효숫자 셋**까지만 적는다. 1.9677 이라고 적으면 있지도 않은
+  // 넷째 자리 정확도를 주장하는 셈이다.
+  return { value, text: signif(value, 3), coarse };
+}
+
+/**
+ * 가로줄 y 에서 [x0, x0+w] 중 영역에 드는 길이의 비율.
+ * 표본 사이에서 부호가 바뀌면 그 자리를 이분법으로 좁혀 정확히 자른다.
+ */
+function coveredFraction(pred, x0, w, y, n) {
+  const at = (t) => pred({ x: x0 + t * w, y });
+  const edge = (a, b) => {                       // a 는 안, b 는 밖
+    for (let k = 0; k < 30; k++) {
+      const m = (a + b) / 2;
+      if (at(m)) a = m; else b = m;
+    }
+    return (a + b) / 2;
+  };
+  let covered = 0;
+  let prevT = 0;
+  let prev = at(0);
+  for (let i = 1; i <= n; i++) {
+    const t = i / n;
+    const cur = at(t);
+    if (cur !== prev) {
+      const c = prev ? edge(prevT, t) : edge(t, prevT);
+      covered += prev ? c - prevT : t - c;
+    } else if (cur) covered += t - prevT;
+    prevT = t; prev = cur;
+  }
+  return covered;
+}
+
+/** 유효숫자 n 자리로 (뒤의 0 은 남긴다 — 2.00 은 "2 쯤"이 아니라 "2.00" 이다) */
+function signif(v, n) {
+  if (!isFinite(v) || v === 0) return String(v);
+  const e = Math.floor(Math.log10(Math.abs(v)));
+  return trimNum(v, Math.max(0, n - 1 - e));
+}
+
 /** 부등식 영역의 성질: 넓이·유계 여부·경계 곡선의 종류 */
 function analyzeRegion(obj, bounds) {
   const d = computeObject(obj, bounds);
@@ -1204,6 +1285,7 @@ function analyzeRegion(obj, bounds) {
   const cellArea = ((bounds.xmax - bounds.xmin) / cols) * ((bounds.ymax - bounds.ymin) / rows);
   const viewArea = (bounds.xmax - bounds.xmin) * (bounds.ymax - bounds.ymin);
   const ratio = inside / (cols * rows);
+  const area = refinedArea(obj, bounds, mask, cols, rows, inside * cellArea);
 
   // 화면 테두리에 닿아 있으면 화면 밖으로 이어지는(유계가 아닐 수 있는) 영역
   let touchesEdge = false;
@@ -1219,10 +1301,12 @@ function analyzeRegion(obj, bounds) {
       detail: '이 화면 안에서는 모든 점이 부등식을 만족합니다.' });
   } else if (touchesEdge) {
     findings.push({ type: 'unbounded', title: '화면 밖으로 이어지는 영역', confidence: 0.8,
-      detail: `보이는 부분의 넓이는 약 ${trimNum(inside * cellArea, 4)} 이고, 전체 화면의 ${(ratio * 100).toFixed(1)}% 입니다. 경계가 화면 끝에 닿아 있어 실제 영역은 더 넓을 수 있습니다.` });
+      detail: `보이는 부분의 넓이는 약 ${area.text} 이고, 전체 화면의 ${(ratio * 100).toFixed(1)}% 입니다. 경계가 화면 끝에 닿아 있어 실제 영역은 더 넓을 수 있습니다.`,
+      value: area.value });
   } else {
     findings.push({ type: 'bounded', title: '유계 영역', confidence: 0.9,
-      detail: `넓이가 약 ${trimNum(inside * cellArea, 4)} 인 닫힌 영역입니다 (화면의 ${(ratio * 100).toFixed(1)}%).` });
+      detail: `넓이가 약 ${area.text} 인 닫힌 영역입니다 (화면의 ${(ratio * 100).toFixed(1)}%).`,
+      value: area.value });
   }
 
   // 경계 곡선의 종류

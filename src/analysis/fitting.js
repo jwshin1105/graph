@@ -117,7 +117,32 @@ export function fitModels(xs, ys, opts = {}) {
   if (sin) out.push(sin);
 
   out.sort((a, b) => a.aic - b.aic);
+  promoteSimplest(out);
   return out;
+}
+
+/**
+ * AIC 차이가 2 이하면 통계적으로 가려낼 수 없는 정도다.
+ * 그럴 때는 더 단순하고 흔한 꼴을 앞에 세운다.
+ *
+ * [2.1, 3.9, 6.2, 8.1, 9.8] 은 눈으로 봐도 직선인데, 거듭제곱 모형이 R² 를
+ * 0.0002 만큼 더 잘 맞춘다는 이유로 "거듭제곱"이라고 답하고 있었다.
+ * 잔차를 9% 줄인 것은 규칙을 바꿔 말할 근거가 못 된다.
+ */
+const SIMPLICITY = ['일차(선형)', '이차', '반비례', '지수', '로그', '거듭제곱', '삼차', '삼각(주기)'];
+function promoteSimplest(out) {
+  if (out.length < 2) return;
+  const rank = (m) => {
+    const i = SIMPLICITY.indexOf(m.name);
+    return i >= 0 ? i : SIMPLICITY.length + (m.params || 0);
+  };
+  const best = out[0].aic;
+  let pick = 0;
+  for (let i = 1; i < out.length; i++) {
+    if (out[i].aic > best + 2) continue;
+    if (rank(out[i]) < rank(out[pick])) pick = i;
+  }
+  if (pick) out.unshift(...out.splice(pick, 1));
 }
 
 function fitSinusoid(xs, ys, label) {
