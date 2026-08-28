@@ -98,6 +98,17 @@ test('진짜 극값·변곡점은 그대로 찾는다', () => {
   assert.equal(q.inflex.length, 2);
 });
 
+test('없앨 수 있는 구멍은 메우고 진짜 극점은 끊는다', () => {
+  const opt = { ymin: -5, ymax: 5 };
+  // sin x / x 는 x = 0 에서만 값이 없고 양옆이 이어지므로 한 줄로 그린다
+  assert.equal(sampleFunction((x) => Math.sin(x) / x, -6.5, 6.5, opt).polylines.length, 1);
+  assert.equal(sampleFunction((x) => (x * x - 1) / (x - 1), -6.5, 6.5, opt).polylines.length, 1);
+  // 극점과 계단은 그대로 끊는다
+  assert.equal(sampleFunction((x) => 1 / x, -6.5, 6.5, opt).polylines.length, 2);
+  assert.ok(sampleFunction(Math.tan, -6.5, 6.5, opt).polylines.length >= 4);
+  assert.equal(sampleFunction(Math.floor, -6.5, 6.5, opt).polylines.length, 14);
+});
+
 test('좌표가 커도 매끄러운 직선을 끊지 않는다', () => {
   const r = sampleFunction((x) => x, 1e15, 1e15 + 10, { ymin: 1e15, ymax: 1e15 + 10 });
   assert.equal(r.polylines.length, 1);

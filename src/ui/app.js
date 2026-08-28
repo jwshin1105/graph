@@ -374,6 +374,14 @@ class App {
         this.scheduleSave();
       };
       input.onkeydown = (e) => {
+        const els = [...document.querySelectorAll('#inputs input.expr')];
+        const at = els.indexOf(input);
+        if (e.key === 'ArrowUp' && at > 0) { e.preventDefault(); els[at - 1].focus(); return; }
+        if (e.key === 'ArrowDown' && at >= 0 && at < els.length - 1) {
+          e.preventDefault();
+          els[at + 1].focus();
+          return;
+        }
         if (e.key === 'Enter') {
           input.blur();
           if (o === this.objects[this.objects.length - 1] && input.value.trim()) {
@@ -864,7 +872,14 @@ class App {
     host.innerHTML = '';
     const h = document.createElement('div');
     h.className = 'an-head';
-    h.textContent = `${res.title} — ${subject}`;
+    const title = document.createElement('span');
+    title.textContent = `${res.title} — ${subject}`;
+    const copy = document.createElement('button');
+    copy.className = 'iconbtn copy';
+    copy.textContent = '복사';
+    copy.title = '분석 결과를 글로 복사';
+    copy.onclick = () => this.copyAnalysis(res, subject);
+    h.append(title, copy);
     host.append(h);
     if (res.note) {
       const n = document.createElement('div');
@@ -896,6 +911,30 @@ class App {
           ? `<div class="next">다음 항 예측 → ${f.next.map((x) => pretty(x)).join(',  ')}</div>` : '') +
         (f.hint ? `<div class="hint">${escapeHtml(f.hint)}</div>` : '');
       host.append(c);
+    }
+  }
+
+  /** 분석 결과를 붙여 넣기 좋은 글로 만들어 복사한다 */
+  async copyAnalysis(res, subject) {
+    const lines = [`${res.title} — ${subject}`];
+    if (res.note) lines.push(`(${res.note})`);
+    if (res.lead) lines.push(res.lead);
+    lines.push('');
+    for (const f of res.findings || []) {
+      lines.push(`· ${f.title}`);
+      if (f.detail) lines.push(`  ${String(f.detail).replace(/\n/g, '\n  ')}`);
+      if (f.formula) lines.push(`  ${f.formula}`);
+      if (f.extra) lines.push(`  ${f.extra}`);
+      if (f.next && f.next.every((v) => typeof v === 'number' && isFinite(v))) {
+        lines.push(`  다음 항 예측: ${f.next.map((v) => pretty(v)).join(', ')}`);
+      }
+    }
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      this.toast('분석 결과를 복사했습니다');
+    } catch {
+      this.toast('복사에 실패했습니다');
     }
   }
 

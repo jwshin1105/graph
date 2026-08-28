@@ -112,6 +112,48 @@ test('객체 하나의 서명', () => {
   assert.equal(objectSignature(empty, B, computeObject).label, '해 없음');
 });
 
+test('훑기 결과는 실행할 때마다 같다', () => {
+  const key = () => {
+    const r = run(['a = 1', 'x^2 + a y^2 = 1'], 'a', -2, 2);
+    return `${r.transitions.map((t) => t.atText).join(',')}|${r.events.map((e) => e.atText).join(',')}`;
+  };
+  const a = key();
+  const b = key();
+  assert.equal(a, b);
+  assert.equal(a, '0|1');       // 분기점 a=0, 원이 되는 순간 a=1
+});
+
+test('깔끔한 수로 맞춘 값에는 근사 표시를 붙이지 않는다', () => {
+  const exact = run(['a = 0', 'y = x^3 + a x'], 'a', -3, 3);
+  assert.equal(exact.transitions[0].approx, false);
+  assert.equal(exact.transitions[0].at, 0);
+  // 화면 범위 때문에 생기는 경계처럼 깔끔하지 않은 값은 근사로 표시한다
+  const win = run(['a = 0', 'y = sin x + a'], 'a', -2, 2);
+  const odd = win.transitions.find((t) => Math.abs(Math.abs(t.at) - 0.206) < 0.01);
+  assert.ok(odd && odd.approx === true);
+  const clean = win.transitions.find((t) => t.at === 1);
+  assert.ok(clean && clean.approx === false);
+});
+
+test('시간 예산을 넘겨도 결과를 돌려준다', () => {
+  const s = setup(['a = 1', 'x^2 + a y^2 = 1'], 'a');
+  const r = sweepParameter({
+    objects: s.targets, setParam: s.setParam, min: -2, max: 2,
+    bounds: B, compute: computeObject, budgetMs: 0,
+  });
+  assert.equal(r.truncated, true);
+  assert.ok(r.stages.length >= 1);
+});
+
+test('계산 설정이 실제로 전달된다', () => {
+  const ctx = createContext();
+  const o = createObject('x^2 + y^2 = 4', ctx, 1, 0);
+  const fine = computeObject(o, B, {});
+  const coarse = computeObject(o, B, { coarsePx: 40, refine: 4 });
+  const count = (d) => d.polylines.reduce((n, l) => n + l.length / 2, 0);
+  assert.ok(count(coarse) < count(fine) / 2, `성긴 설정 ${count(coarse)} vs 기본 ${count(fine)}`);
+});
+
 test('슬라이더 의존성 판정', () => {
   const ctx = createContext();
   createObject('a = 1', ctx, 1, 0);

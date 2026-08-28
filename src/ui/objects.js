@@ -630,7 +630,7 @@ function buildSequence(obj, asts, ctx) {
  * 현재 보이는 영역에 맞춰 객체의 그릴 거리를 계산한다.
  * @returns {{polylines?:number[][], points?:number[][], mask?:object, labels?:Array}}
  */
-export function computeObject(obj, bounds) {
+export function computeObject(obj, bounds, opts = {}) {
   const b = bounds;
   switch (obj.kind) {
     case 'union2': {
@@ -665,7 +665,7 @@ export function computeObject(obj, bounds) {
       return { polylines: r.polylines.map(swapXY), points: [] };
     }
     case 'implicit': {
-      const r = traceImplicit((x, y) => obj.f({ x, y }), b);
+      const r = traceImplicit((x, y) => obj.f({ x, y }), b, opts);
       return {
         polylines: r.polylines, points: r.points, isolated: r.points,
         empty: !r.polylines.length && !r.points.length,
@@ -678,7 +678,7 @@ export function computeObject(obj, bounds) {
       const mask = regionMask((x, y) => obj.pred({ x, y }), b, cols);
       const polylines = [];
       for (const bf of obj.boundaries) {
-        const t = traceImplicit((x, y) => bf({ x, y }), b, { findIsolated: false });
+        const t = traceImplicit((x, y) => bf({ x, y }), b, { ...opts, findIsolated: false });
         polylines.push(...t.polylines);
       }
       return { mask, polylines, dash: [6, 4], points: [] };
@@ -694,8 +694,8 @@ export function computeObject(obj, bounds) {
       }
       const fns = obj.residuals.map((f) => (x, y) => f({ x, y }));
       const s = fns.length === 2
-        ? solveSystem2D(fns[0], fns[1], b)
-        : solveSystemN(fns, b);
+        ? solveSystem2D(fns[0], fns[1], b, opts)
+        : solveSystemN(fns, b, opts);
       return {
         points: s.points,
         polylines: s.curves.flatMap((c) => c.polylines),
@@ -708,7 +708,7 @@ export function computeObject(obj, bounds) {
       const out = { polylines: [], points: [], isolated: [] };
       for (const child of obj.children || []) {
         if (child.error) continue;
-        const d = computeObject(child, bounds);
+        const d = computeObject(child, bounds, opts);
         out.polylines.push(...(d.polylines || []));
         out.points.push(...(d.points || []));
         out.isolated.push(...(d.isolated || []));

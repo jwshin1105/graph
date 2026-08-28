@@ -80,11 +80,24 @@ export function sampleFunction(f, xmin, xmax, opts = {}) {
   };
 
   const step = xspan / samples;
-  let px = xmin, py = f(xmin);
+  const vals = new Array(samples + 1);
+  for (let i = 0; i <= samples; i++) vals[i] = f(xmin + i * step);
+
+  // 한 점만 값이 없고 양옆이 매끄럽게 이어지면(sin x / x 의 x = 0 처럼)
+  // 없앨 수 있는 구멍이므로 양옆의 평균으로 메워 선을 끊지 않는다.
+  for (let i = 1; i < samples; i++) {
+    if (isFinite(vals[i])) continue;
+    const l = vals[i - 1];
+    const r = vals[i + 1];
+    if (!isFinite(l) || !isFinite(r)) continue;
+    if (Math.abs(r - l) < yspan * 0.02) vals[i] = (l + r) / 2;
+  }
+
+  let px = xmin, py = vals[0];
   emit(px, py);
   for (let i = 1; i <= samples; i++) {
     const x = xmin + i * step;
-    const y = f(x);
+    const y = vals[i];
     if (!isFinite(py) && !isFinite(y)) { px = x; py = y; continue; }
     walk(px, py, x, y, 0);
     if (isFinite(y)) emit(x, y); else cut(x);
