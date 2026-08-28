@@ -253,13 +253,21 @@ const SYMBOLS = [
   { v: Math.log(3), s: 'ln3' },
 ];
 
-/** 실수를 가능하면 정수·분수·π 배수 등 기호 형태로 예쁘게 표현한다. */
+/**
+ * 실수를 가능하면 정수·분수·π 배수 등 기호 형태로 예쁘게 표현한다.
+ * 기호꼴이 소수보다 길어지면(2.1 → 21/10) 소수를 쓴다 — 자료 값은 소수가 읽기 쉽다.
+ */
 export function pretty(x, tol = 1e-9) {
   if (!isFinite(x)) return x > 0 ? '∞' : '-∞';
   if (Math.abs(x) < tol) return '0';
   if (Math.abs(x - Math.round(x)) < tol * Math.max(1, Math.abs(x))) return String(Math.round(x));
   const r = toRational(x, 1000, tol);
-  if (r && r.q <= 100) return `${r.p}/${r.q}`;
+  if (r && r.q <= 100) {
+    const frac = `${r.p}/${r.q}`;
+    const dec = trimNum(x);
+    // 분모가 작은 분수(1/2, 3/4)는 그대로 두고, 그 밖에는 짧은 쪽을 쓴다
+    return r.q > 4 && dec.length <= frac.length ? dec : frac;
+  }
   for (const { v, s } of SYMBOLS) {
     const q = toRational(x / v, 100, tol * 10);
     if (q && Math.abs(q.p) <= 200 && q.q <= 100) {
@@ -313,4 +321,67 @@ export function coefTerm(c, sym) {
   const a = Math.abs(c);
   const body = Math.abs(a - 1) < 1e-14 ? sym : `${pretty(a)}·${sym}`;
   return c < 0 ? `-${body}` : body;
+}
+
+/**
+ * Levenberg–Marquardt 최소제곱.
+ * residual(params) 가 잔차 벡터를 돌려주면, 그 제곱합을 최소로 만드는 파라미터를 찾는다.
+ * 야코비안은 수치 미분으로 구하므로 어떤 모형이든 그대로 넣을 수 있다.
+ */
+export function levenbergMarquardt(residual, init, opts = {}) {
+  const { maxIter = 200, tol = 1e-12 } = opts;
+  const n = init.length;
+  let p = init.slice();
+  let r = residual(p);
+  if (!r || !r.length) return null;
+  const sse = (v) => v.reduce((a, b) => a + b * b, 0);
+  let cost = sse(r);
+  if (!isFinite(cost)) return null;
+  let lambda = 1e-3;
+
+  for (let it = 0; it < maxIter; it++) {
+    const m = r.length;
+    // 야코비안
+    const J = Array.from({ length: m }, () => new Array(n).fill(0));
+    for (let j = 0; j < n; j++) {
+      const h = Math.max(1e-7, Math.abs(p[j]) * 1e-7);
+      const q = p.slice();
+      q[j] = p[j] + h;
+      const rp = residual(q);
+      q[j] = p[j] - h;
+      const rm = residual(q);
+      if (!rp || !rm) return { params: p, cost, iterations: it };
+      for (let i = 0; i < m; i++) J[i][j] = (rp[i] - rm[i]) / (2 * h);
+    }
+    // 정규방정식 (JᵀJ + λ diag) δ = -Jᵀ r
+    const A = Array.from({ length: n }, () => new Array(n).fill(0));
+    const g = new Array(n).fill(0);
+    for (let i = 0; i < m; i++) {
+      for (let j = 0; j < n; j++) {
+        g[j] -= J[i][j] * r[i];
+        for (let k = 0; k < n; k++) A[j][k] += J[i][j] * J[i][k];
+      }
+    }
+    let improved = false;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const M = A.map((row, j) => row.map((v, k) => (j === k ? v * (1 + lambda) + 1e-14 : v)));
+      const step = solveLinear(M, g);
+      if (!step || step.some((v) => !isFinite(v))) { lambda *= 10; continue; }
+      const q = p.map((v, j) => v + step[j]);
+      const rq = residual(q);
+      const cq = rq ? sse(rq) : Infinity;
+      if (isFinite(cq) && cq < cost) {
+        const gain = cost - cq;
+        p = q; r = rq; cost = cq;
+        lambda = Math.max(1e-12, lambda / 3);
+        improved = true;
+        if (gain < tol * (1 + cost)) return { params: p, cost, iterations: it };
+        break;
+      }
+      lambda *= 10;
+      if (lambda > 1e12) return { params: p, cost, iterations: it };
+    }
+    if (!improved) return { params: p, cost, iterations: it };
+  }
+  return { params: p, cost, iterations: maxIter };
 }

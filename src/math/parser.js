@@ -7,7 +7,7 @@ import { FUNCTIONS, CONSTANTS } from './functions.js';
 const LETTER = /[A-Za-zΑ-ω]/;
 const DIGIT = /[0-9]/;
 
-const COMPARE = new Set(['=', '==', '<', '>', '<=', '>=', '!=']);
+const COMPARE = new Set(['=', '==', '<', '>', '<=', '>=', '!=', '~']);
 const RELMAP = { '≤': '<=', '≥': '>=', '≠': '!=', '≟': '=' };
 
 export class ParseError extends Error {
@@ -27,7 +27,7 @@ export function tokenize(src, knownNames = new Set()) {
     ...knownNames,
     ...Object.keys(FUNCTIONS),
     ...Object.keys(CONSTANTS),
-    'and', 'or', 'not',
+    'and', 'or', 'not', 'for',
   ]);
   const tokens = [];
   let i = 0;
@@ -40,7 +40,11 @@ export function tokenize(src, knownNames = new Set()) {
     if (DIGIT.test(c) || (c === '.' && DIGIT.test(src[i + 1] || ''))) {
       let j = i;
       while (j < src.length && DIGIT.test(src[j])) j++;
-      if (src[j] === '.') { j++; while (j < src.length && DIGIT.test(src[j])) j++; }
+      // 1...10 의 '.' 은 소수점이 아니라 범위 기호다
+      if (src[j] === '.' && src[j + 1] !== '.') {
+        j++;
+        while (j < src.length && DIGIT.test(src[j])) j++;
+      }
       if (src[j] === 'e' || src[j] === 'E') {
         let k = j + 1;
         if (src[k] === '+' || src[k] === '-') k++;
@@ -73,7 +77,7 @@ export function tokenize(src, knownNames = new Set()) {
     }
 
     if (RELMAP[c]) { push('op', RELMAP[c], i); i++; continue; }
-    if (c === '≈') { push('op', '=', i); i++; continue; }
+
 
     const two = src.slice(i, i + 2);
     if (two === '<=' || two === '>=' || two === '!=' || two === '==') {
@@ -86,7 +90,10 @@ export function tokenize(src, knownNames = new Set()) {
     if (c === '·' || c === '×') { push('op', '*', i); i++; continue; }
     if (c === '÷') { push('op', '/', i); i++; continue; }
     if (c === '<' || c === '>' || c === '=') { push('op', c, i); i++; continue; }
-    if ('()[]{},|_'.includes(c)) { push('punct', c, i); i++; continue; }
+    if (c === '.' && src.slice(i, i + 3) === '...') { push('punct', '...', i); i += 3; continue; }
+    if (c === '…') { push('punct', '...', i); i++; continue; }
+    if (c === '~' || c === '≈') { push('op', '~', i); i++; continue; }
+    if ('()[]{},|_:'.includes(c)) { push('punct', c, i); i++; continue; }
     if (c === '∧') { push('name', 'and', i); i++; continue; }
     if (c === '∨') { push('name', 'or', i); i++; continue; }
     if (c === '√') { push('name', 'sqrt', i); i++; continue; }
@@ -175,19 +182,29 @@ class Parser {
   parseAdd() {
     let left = this.parseMul();
     for (;;) {
-      if (this.at('op', '+')) { this.next(); left = bin('+', left, this.parseMul()); }
-      else if (this.at('op', '-')) { this.next(); left = bin('-', left, this.parseMul()); }
-      else return left;
+      if (this.at('op', '+')) { this.next(); left = bin('+', left, this.parseMul()); continue; }
+      if (this.at('op', '-')) { this.next(); left = bin('-', left, this.parseMul()); continue; }
+      // 정의역 제한: y = x^2 {0 < x < 3} 처럼 앞의 식 전체에 조건을 건다
+      if (this.at('punct', '{') && this.braceIsPiece()) {
+        const brace = this.parseBrace();
+        const cases = brace.node.cases.map((c) => ({ cond: c.cond, value: c.value ?? left }));
+        left = { type: 'piece', cases, otherwise: brace.node.otherwise };
+        continue;
+      }
+      return left;
     }
   }
 
   startsFactor() {
     const tk = this.peek();
     if (tk.type === 'num') return true;
-    if (tk.type === 'name') return !['and', 'or'].includes(tk.value);
+    if (tk.type === 'name') return !['and', 'or', 'for'].includes(tk.value);
     if (tk.type === 'punct') {
       if (tk.value === '|') return this.barDepth === 0;
-      return tk.value === '(' || tk.value === '{' || tk.value === '[';
+      // 값 없는 조건 블록은 곱할 인수가 아니라 뒤따르는 정의역 제한이다.
+      // {x<0: -1, 1} 처럼 값이 있는 조각별 식은 그냥 인수로 본다.
+      if (tk.value === '{') return !this.braceIsPiece();
+      return tk.value === '(' || tk.value === '[';
     }
     return false;
   }
@@ -249,6 +266,87 @@ class Parser {
     return e;
   }
 
+  /**
+   * '[' 또는 '{' 로 시작하는 묶음을 읽는다.
+   *   [1, 2, 3]              리스트
+   *   [1...10]  [1,3,...,11] 범위
+   *   [n^2 for n=[1...5]]    리스트 내포
+   *   {x<0: -x, x^2}         조각별 정의
+   *   {0<x<3}                조건(참인 곳만 남기는 제한)
+   * @returns {{kind:'list'|'piece', node:object}}
+   */
+  /** 지금 위치의 '{' 가 조건/조각별 블록인지 미리 훑어본다 (위치는 되돌린다) */
+  braceIsPiece() {
+    const save = this.p;
+    try {
+      const r = this.parseBrace();
+      this.p = save;
+      return r.kind === 'piece' && r.pure;
+    } catch {
+      this.p = save;
+      return false;
+    }
+  }
+
+  parseBrace() {
+    const open = this.next().value;           // '[' 또는 '{'
+    const close = open === '[' ? ']' : '}';
+    if (this.eat('punct', close)) return { kind: 'list', node: { type: 'list', items: [] } };
+
+    const first = this.parseOr();
+
+    // 범위: [a...b]
+    if (this.at('punct', '...')) {
+      this.next();
+      const to = this.parseOr();
+      this.expect('punct', close);
+      return { kind: 'list', node: { type: 'range', from: first, step: null, to } };
+    }
+    // 리스트 내포: [expr for n = list]
+    if (this.at('name', 'for')) {
+      this.next();
+      const v = this.expect('name').value;
+      this.expect('op', '=');
+      const src = this.parseOr();
+      this.expect('punct', close);
+      return { kind: 'list', node: { type: 'comp', body: first, varName: v, source: src } };
+    }
+    // 조각별 정의: 조건 : 값
+    if (this.at('punct', ':')) {
+      this.next();
+      const cases = [{ cond: first, value: this.parseOr() }];
+      let otherwise = null;
+      while (this.eat('punct', ',')) {
+        const e = this.parseOr();
+        if (this.eat('punct', ':')) cases.push({ cond: e, value: this.parseOr() });
+        else { otherwise = e; break; }
+      }
+      this.expect('punct', close);
+      return { kind: 'piece', pure: false, node: { type: 'piece', cases, otherwise } };
+    }
+    // 조건 하나만 있는 제한: {0 < x < 3}
+    if (this.at('punct', close) && (first.type === 'cmp' || first.type === 'logic')) {
+      this.next();
+      // 값이 없는 조건만 있는 블록 = "정의역 제한"
+      return { kind: 'piece', pure: true, node: { type: 'piece', cases: [{ cond: first, value: null }], otherwise: null } };
+    }
+    // 그 밖에는 리스트
+    const items = [first];
+    while (this.eat('punct', ',')) {
+      if (this.at('punct', '...')) {
+        // [a, b, ..., c] — 간격이 정해진 범위
+        this.next();
+        this.eat('punct', ',');
+        const to = this.parseOr();
+        this.expect('punct', close);
+        return { kind: 'list', node: { type: 'range', from: items[0], step: items[1] ?? null, to } };
+      }
+      items.push(this.parseOr());
+    }
+    this.expect('punct', close);
+    return { kind: 'list', node: { type: 'list', items } };
+  }
+
   parsePrimary() {
     const tk = this.peek();
     if (tk.type === 'num') { this.next(); return num(tk.value); }
@@ -267,15 +365,8 @@ class Parser {
     }
 
     if (tk.type === 'punct' && (tk.value === '{' || tk.value === '[')) {
-      const close = tk.value === '{' ? '}' : ']';
-      this.next();
-      const items = [];
-      if (!this.at('punct', close)) {
-        items.push(this.parseOr());
-        while (this.eat('punct', ',')) items.push(this.parseOr());
-      }
-      this.expect('punct', close);
-      return { type: 'list', items };
+      const brace = this.parseBrace();
+      return brace.node;
     }
 
     if (tk.type === 'punct' && tk.value === '|') {
@@ -338,7 +429,15 @@ export function freeVars(node, out = new Set()) {
   if (!node || typeof node !== 'object') return out;
   switch (node.type) {
     case 'var': out.add(node.name); break;
-    case 'index': freeVars(node.base, out); freeVars(node.index, out); break;
+    case 'index':
+      // x_1 처럼 첨자가 숫자면 'x_1' 자체가 하나의 이름이다
+      if (node.base.type === 'var' && node.index.type === 'num') {
+        out.add(`${node.base.name}_${node.index.value}`);
+      } else {
+        freeVars(node.base, out);
+        freeVars(node.index, out);
+      }
+      break;
     case 'call': {
       node.args.forEach((a) => freeVars(a, out));
       // sum/prod/integral 의 둘째 인자는 묶인 변수이므로 자유변수가 아니다
@@ -354,6 +453,18 @@ export function freeVars(node, out = new Set()) {
     case 'bin': case 'cmp': case 'logic': freeVars(node.a, out); freeVars(node.b, out); break;
     case 'un': freeVars(node.a, out); break;
     case 'list': case 'tuple': node.items.forEach((a) => freeVars(a, out)); break;
+    case 'range':
+      freeVars(node.from, out); freeVars(node.to, out);
+      if (node.step) freeVars(node.step, out);
+      break;
+    case 'comp':
+      freeVars(node.body, out); freeVars(node.source, out);
+      out.delete(node.varName);
+      break;
+    case 'piece':
+      node.cases.forEach((c) => { freeVars(c.cond, out); freeVars(c.value, out); });
+      if (node.otherwise) freeVars(node.otherwise, out);
+      break;
     default: break;
   }
   return out;
@@ -392,7 +503,14 @@ export function format(node) {
     case 'cmp': return `${format(node.a)} ${node.op} ${format(node.b)}`;
     case 'logic': return `${format(node.a)} ${node.op === 'and' ? '∧' : '∨'} ${format(node.b)}`;
     case 'tuple': return `(${node.items.map(format).join(', ')})`;
-    case 'list': return `{${node.items.map(format).join(', ')}}`;
+    case 'list': return `[${node.items.map(format).join(', ')}]`;
+    case 'range': return `[${format(node.from)}${node.step ? `, ${format(node.step)}` : ''}…${format(node.to)}]`;
+    case 'comp': return `[${format(node.body)} for ${node.varName} = ${format(node.source)}]`;
+    case 'piece': {
+      const parts = node.cases.map((c) => `${format(c.cond)}: ${format(c.value)}`);
+      if (node.otherwise) parts.push(format(node.otherwise));
+      return `{${parts.join(', ')}}`;
+    }
     default: return '?';
   }
 }

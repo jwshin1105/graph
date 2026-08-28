@@ -7,7 +7,7 @@ import { FUNCTIONS, CONSTANTS } from '../math/functions.js';
 import { traceImplicit } from '../engine/implicit.js';
 import { sampleFunction, sampleParametric, samplePolar } from '../engine/sampler.js';
 import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask, polylineIntersections } from '../engine/solvers.js';
-import { newton2D } from '../math/numeric.js';
+import { newton2D, levenbergMarquardt, trimNum as tn } from '../math/numeric.js';
 import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
@@ -74,6 +74,28 @@ function classify(obj, asts, ctx) {
   const main = asts[asts.length - 1];
   obj.asts = asts;
   obj.ranges = ranges;
+
+  // ── 리스트 정의: x_1 = [1,2,3] 또는 L = [1...10]
+  const listDef = asts.find((a) => a.type === 'cmp' && a.op === '='
+    && ['range', 'comp', 'list'].includes(a.b.type)
+    && ((a.a.type === 'var' && !['x', 'y', 'r'].includes(a.a.name))
+      || (a.a.type === 'index' && a.a.index.type === 'num')));
+  if (listDef && !(listDef.b.type === 'list'
+      && listDef.b.items.every((it) => it.type === 'tuple'))) {
+    const name = listDef.a.type === 'var'
+      ? listDef.a.name
+      : `${listDef.a.base.name}_${listDef.a.index.value}`;
+    ctx.defs.set(name, { params: [], body: listDef.b, compiled: null });
+    obj.kind = 'list';
+    obj.defName = name;
+    obj.values = compile(listDef.b, ctx)({});
+    obj.label = `${name} = [${obj.values.slice(0, 8).map((v) => tn(v, 6)).join(', ')}`
+      + `${obj.values.length > 8 ? ', …' : ''}]  (${obj.values.length}개)`;
+    return obj;
+  }
+
+  // ── 회귀: y_1 ~ a x_1 + b
+  if (main.type === 'cmp' && main.op === '~') return buildRegression(obj, main, ctx);
 
   // ── 점열 정의: P_n = (n, n²) — 값이 점인 수열
   const ptSeq = asts.find((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index'
@@ -154,6 +176,22 @@ function classify(obj, asts, ctx) {
     if (free.size === 0) {
       const f = compile(main, ctx);
       const [x, y] = f({});
+      // (x_1, y_1) 처럼 두 리스트를 짝지으면 점열이 된다
+      if (Array.isArray(x) || Array.isArray(y)) {
+        const xs = Array.isArray(x) ? x : null;
+        const ys = Array.isArray(y) ? y : null;
+        const n = Math.min(xs ? xs.length : Infinity, ys ? ys.length : Infinity);
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+          const px = xs ? xs[i] : x;
+          const py = ys ? ys[i] : y;
+          if (isFinite(px) && isFinite(py)) pts.push([px, py]);
+        }
+        obj.kind = 'points';
+        obj.points = pts;
+        obj.label = `점 ${pts.length}개`;
+        return obj;
+      }
       obj.kind = 'point';
       obj.points = [[x, y]];
       obj.label = `(${pretty(x)}, ${pretty(y)})`;
@@ -440,6 +478,76 @@ function isRegion(node) {
   return false;
 }
 
+// ── 회귀 ────────────────────────────────────────────────────
+/**
+ * y_1 ~ a·x_1 + b 꼴의 회귀.
+ * 정의되지 않은 이름을 미지의 계수로 보고 Levenberg–Marquardt 로 맞춘 뒤,
+ * 찾은 값을 ctx 에 등록해 다른 식에서도 쓸 수 있게 한다.
+ */
+function buildRegression(obj, main, ctx) {
+  const evalNode = (n) => compile(n, ctx)({});
+  const observed = evalNode(main.a);
+  if (!Array.isArray(observed) || observed.length < 2) {
+    obj.kind = 'error';
+    obj.error = '회귀는 왼쪽에 자료 리스트가 있어야 합니다. 예: y_1 ~ a x_1 + b';
+    return obj;
+  }
+  // 아직 정의되지 않은 이름 = 맞출 계수.
+  // 앞선 회귀가 정해 둔 계수는 다시 미지수로 본다 (같은 회귀를 고쳐 쓸 수 있어야 하므로)
+  const params = [...freeVars(main.b)].filter((v) => {
+    if (['x', 'y'].includes(v)) return false;
+    const d = ctx.defs.get(v);
+    return !d || d.fromRegression;
+  });
+  if (!params.length) {
+    obj.kind = 'error';
+    obj.error = '맞출 계수가 없습니다. a, b 처럼 아직 정의하지 않은 이름을 써 주세요.';
+    return obj;
+  }
+  const model = compile(main.b, ctx);
+  const predict = (values) => {
+    const env = Object.create(null);
+    params.forEach((p, i) => { env[p] = values[i]; });
+    const out = model(env);
+    return Array.isArray(out) ? out : observed.map(() => out);
+  };
+  const residual = (values) => {
+    const pred = predict(values);
+    const n = Math.min(pred.length, observed.length);
+    const r = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const d = pred[i] - observed[i];
+      if (!isFinite(d)) return null;
+      r[i] = d;
+    }
+    return r;
+  };
+  const fit = levenbergMarquardt(residual, params.map(() => 1));
+  if (!fit) {
+    obj.kind = 'error';
+    obj.error = '회귀가 수렴하지 않았습니다. 계수의 개수나 모형을 확인해 주세요.';
+    return obj;
+  }
+  params.forEach((p, i) => {
+    ctx.defs.set(p, {
+      params: [], body: { type: 'num', value: fit.params[i] }, compiled: null, fromRegression: true,
+    });
+  });
+  const mean = observed.reduce((a, b) => a + b, 0) / observed.length;
+  const sst = observed.reduce((a, b) => a + (b - mean) ** 2, 0);
+  obj.kind = 'regression';
+  obj.params = params;
+  obj.values = fit.params;
+  obj.r2 = sst > 0 ? 1 - fit.cost / sst : 1;
+  obj.rmse = Math.sqrt(fit.cost / observed.length);
+  obj.count = observed.length;
+  obj.observed = observed;
+  obj.predicted = predict(fit.params);
+  obj.label = `${format(main)}  →  `
+    + params.map((p, i) => `${p} = ${tn(fit.params[i], 6)}`).join(', ');
+  return obj;
+}
+
 // ── 수열 ────────────────────────────────────────────────────
 function buildSequence(obj, asts, ctx) {
   const defs = asts.filter((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index');
@@ -513,9 +621,26 @@ export function computeObject(obj, bounds) {
       return { polylines: [], points: [] };
     }
     case 'function': {
-      const f = obj.substitute
-        ? (x) => obj.fn({ [obj.substitute]: x })
-        : (x) => obj.fn({ x });
+      const v = obj.substitute || 'x';
+      const f = (x) => obj.fn({ [v]: x });
+      // 값이 리스트면 (y = [1,2,3]x 처럼) 한 번에 여러 곡선을 그린다.
+      // 정의역이 제한된 식은 가운데 한 점만 봐서는 알 수 없으므로 여러 곳을 짚어 본다.
+      let probe = null;
+      for (let i = 0; i <= 12 && !probe; i++) {
+        const v0 = f(b.xmin + ((b.xmax - b.xmin) * i) / 12);
+        if (Array.isArray(v0)) probe = v0;
+      }
+      if (probe) {
+        const out = [];
+        for (let k = 0; k < Math.min(probe.length, 40); k++) {
+          const fk = (x) => {
+            const val = obj.fn({ [v]: x });
+            return Array.isArray(val) ? val[k] : val;
+          };
+          out.push(...sampleFunction(fk, b.xmin, b.xmax, { ymin: b.ymin, ymax: b.ymax }).polylines);
+        }
+        return { polylines: out, points: [], branches: probe.length };
+      }
       const r = sampleFunction(f, b.xmin, b.xmax, { ymin: b.ymin, ymax: b.ymax });
       return { polylines: r.polylines, points: [] };
     }
@@ -769,6 +894,34 @@ export function analyzeObject(obj, bounds, ctx) {
       case 'point': {
         const r = analyzePointSet(obj.points);
         return { title: '점열 분석', ...r };
+      }
+      case 'regression': {
+        const findings = obj.params.map((p, i) => ({
+          type: 'param', title: `${p} = ${tn(obj.values[i], 8)}`, confidence: 1,
+          detail: '자료에 가장 잘 맞도록 정한 값입니다. 다른 식에서 그대로 쓸 수 있습니다.',
+        }));
+        findings.unshift({
+          type: 'quality',
+          title: `결정계수 R² = ${obj.r2.toFixed(6)}`,
+          confidence: obj.r2 > 0.99 ? 1 : obj.r2 > 0.9 ? 0.8 : 0.5,
+          detail: `자료 ${obj.count}개, 잔차 제곱평균제곱근 RMSE = ${tn(obj.rmse, 6)}. `
+            + (obj.r2 > 0.99 ? '모형이 자료를 거의 그대로 설명합니다.'
+              : obj.r2 > 0.9 ? '대체로 잘 맞지만 흩어짐이 남아 있습니다.'
+                : '이 모형으로는 자료를 잘 설명하지 못합니다. 다른 모형을 시험해 보세요.'),
+        });
+        const resid = obj.observed.map((v, i) => obj.predicted[i] - v);
+        findings.push({
+          type: 'residual', title: '잔차',
+          confidence: 0.7,
+          detail: resid.slice(0, 8).map((v) => tn(v, 4)).join(', ') + (resid.length > 8 ? ' …' : ''),
+        });
+        return { title: '회귀 분석', findings, summary: obj.label };
+      }
+      case 'list': {
+        const r = analyzeSequence(obj.values, { name: obj.defName });
+        return { title: '리스트 분석', ...r,
+          lead: `${obj.values.length}개 값: ${obj.values.slice(0, 10).map((v) => pretty(v)).join(', ')}`
+            + (obj.values.length > 10 ? ' …' : '') };
       }
       case 'pointseq': {
         const d = computeObject(obj, bounds);

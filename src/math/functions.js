@@ -101,6 +101,29 @@ export const FUNCTIONS = {
   if: { arity: 3, fn: (c, a, b) => (c ? a : b) },
   // 아래 셋은 컴파일러가 특수형으로 가로채 처리한다(인자를 지연 평가해야 하므로).
   // 여기에 등록해 두는 것은 토크나이저·파서가 함수 이름으로 알아보게 하기 위함이다.
+  // 리스트 통계 — list:true 인 함수는 리스트를 통째로 받는다
+  total: { arity: 1, list: true, fn: (v) => toList(v).reduce((a, b) => a + b, 0) },
+  mean: { arity: 1, list: true, fn: (v) => { const l = toList(v); return l.length ? l.reduce((a, b) => a + b, 0) / l.length : NaN; } },
+  median: { arity: 1, list: true, fn: (v) => {
+    const l = toList(v).slice().sort((a, b) => a - b);
+    if (!l.length) return NaN;
+    const m = l.length >> 1;
+    return l.length % 2 ? l[m] : (l[m - 1] + l[m]) / 2;
+  } },
+  variance: { arity: 1, list: true, fn: (v) => sampleVar(toList(v)) },
+  stdev: { arity: 1, list: true, fn: (v) => Math.sqrt(sampleVar(toList(v))) },
+  stdevp: { arity: 1, list: true, fn: (v) => { const l = toList(v); return Math.sqrt(sampleVar(l) * (l.length - 1) / l.length); } },
+  length: { arity: 1, list: true, fn: (v) => toList(v).length },
+  count: { arity: 1, list: true, fn: (v) => toList(v).length },
+  sort: { arity: 1, list: true, fn: (v) => toList(v).slice().sort((a, b) => a - b) },
+  reverse: { arity: 1, list: true, fn: (v) => toList(v).slice().reverse() },
+  quantile: { arity: 2, list: true, fn: (v, p) => {
+    const l = toList(v).slice().sort((a, b) => a - b);
+    if (!l.length) return NaN;
+    const i = (l.length - 1) * Math.min(1, Math.max(0, p));
+    const lo = Math.floor(i), hi = Math.ceil(i);
+    return l[lo] + (l[hi] - l[lo]) * (i - lo);
+  } },
   sum: { arity: -1, special: true, fn: () => NaN },
   prod: { arity: -1, special: true, fn: () => NaN },
   integral: { arity: -1, special: true, fn: () => NaN },
@@ -108,6 +131,17 @@ export const FUNCTIONS = {
 
 /** 인자를 지연 평가해야 하는 특수형 이름 */
 export const SPECIAL_FORMS = new Set(['sum', 'prod', 'integral']);
+
+function toList(v) {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === 'number' && isFinite(x));
+  return typeof v === 'number' && isFinite(v) ? [v] : [];
+}
+
+function sampleVar(l) {
+  if (l.length < 2) return NaN;
+  const m = l.reduce((a, b) => a + b, 0) / l.length;
+  return l.reduce((a, b) => a + (b - m) ** 2, 0) / (l.length - 1);
+}
 
 export const CONSTANTS = {
   pi: Math.PI,

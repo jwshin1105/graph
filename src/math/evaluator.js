@@ -16,6 +16,31 @@ export function makeContext() {
   return { defs: new Map(), seqs: new Map() };
 }
 
+const isList = Array.isArray;
+
+/**
+ * 두 자리 연산을 리스트에도 통하게 만든다.
+ * 숫자끼리면 그대로, 한쪽이 리스트면 원소마다, 둘 다 리스트면 짝지어 계산한다.
+ */
+function lift2(f) {
+  return (a, b) => {
+    if (typeof a === 'number' && typeof b === 'number') return f(a, b);
+    if (isList(a) && isList(b)) {
+      const n = Math.min(a.length, b.length);
+      const out = new Array(n);
+      for (let i = 0; i < n; i++) out[i] = f(a[i], b[i]);
+      return out;
+    }
+    if (isList(a)) return a.map((v) => f(v, b));
+    if (isList(b)) return b.map((v) => f(a, v));
+    return f(a, b);
+  };
+}
+
+function lift1(f) {
+  return (a) => (isList(a) ? a.map(f) : f(a));
+}
+
 const BINOPS = {
   '+': (a, b) => a + b,
   '-': (a, b) => a - b,
@@ -33,6 +58,8 @@ const BINOPS = {
   },
 };
 
+for (const k of Object.keys(BINOPS)) BINOPS[k] = lift2(BINOPS[k]);
+
 const CMPOPS = {
   '=': (a, b) => (Math.abs(a - b) < 1e-12 ? 1 : 0),
   '<': (a, b) => (a < b ? 1 : 0),
@@ -41,6 +68,8 @@ const CMPOPS = {
   '>=': (a, b) => (a >= b ? 1 : 0),
   '!=': (a, b) => (a !== b ? 1 : 0),
 };
+
+for (const k of Object.keys(CMPOPS)) CMPOPS[k] = lift2(CMPOPS[k]);
 
 /**
  * AST 를 (env) => number 형태의 함수로 컴파일한다.
@@ -74,7 +103,8 @@ function build(node, ctx) {
     }
     case 'un': {
       const a = build(node.a, ctx);
-      return (env) => -a(env);
+      const neg = lift1((v) => -v);
+      return (env) => neg(a(env));
     }
     case 'bin': {
       const f = BINOPS[node.op];
@@ -98,7 +128,16 @@ function build(node, ctx) {
     case 'index': {
       const name = node.base.type === 'var' ? node.base.name : null;
       const idx = build(node.index, ctx);
+      // x_1 = [1,2,3] 처럼 첨자 이름으로 정의된 리스트를 먼저 찾는다
+      const staticKey = name && node.index.type === 'num' ? `${name}_${node.index.value}` : null;
       return (env) => {
+        if (staticKey) {
+          const d0 = ctx.defs.get(staticKey);
+          if (d0 && d0.params.length === 0) {
+            if (!d0.compiled) d0.compiled = build(d0.body, ctx);
+            return d0.compiled(env);
+          }
+        }
         const n = idx(env);
         const seq = name && ctx.seqs.get(name);
         if (seq) return seq.get(n);
@@ -136,13 +175,26 @@ function build(node, ctx) {
       }
       const spec = FUNCTIONS[name];
       const fn = spec.fn;
+      if (spec.list) {
+        // 리스트 전체를 받아 하나의 값을 내는 함수 (mean, total, …)
+        return (env) => fn(...args.map((a) => a(env)));
+      }
       if (spec.arity === 1 && args.length === 1) {
         const a0 = args[0];
-        return (env) => fn(a0(env));
+        const lifted = lift1(fn);
+        return (env) => lifted(a0(env));
       }
       if (spec.arity === 2 && args.length === 2) {
         const [a0, a1] = args;
-        return (env) => fn(a0(env), a1(env));
+        const lifted = lift2(fn);
+        return (env) => lifted(a0(env), a1(env));
+      }
+      if (spec.arity === -1) {
+        // min(list), max(1,2,3) 처럼 리스트와 낱개 인자를 함께 받는다
+        return (env) => fn(...args.flatMap((a) => {
+          const v = a(env);
+          return isList(v) ? v : [v];
+        }));
       }
       return (env) => fn(...args.map((a) => a(env)));
     }
@@ -150,6 +202,45 @@ function build(node, ctx) {
     case 'list': {
       const items = node.items.map((a) => build(a, ctx));
       return (env) => items.map((f) => f(env));
+    }
+    case 'range': {
+      const from = build(node.from, ctx);
+      const to = build(node.to, ctx);
+      const step = node.step ? build(node.step, ctx) : null;
+      return (env) => {
+        const a = from(env);
+        const b = to(env);
+        const d = step ? step(env) - a : (b >= a ? 1 : -1);
+        if (!isFinite(a) || !isFinite(b) || !isFinite(d) || d === 0) return [];
+        const n = Math.floor((b - a) / d + 1e-9) + 1;
+        if (n <= 0 || n > 100000) return [];
+        const out = new Array(n);
+        for (let i = 0; i < n; i++) out[i] = a + d * i;
+        return out;
+      };
+    }
+    case 'comp': {
+      const body = build(node.body, ctx);
+      const src = build(node.source, ctx);
+      const vname = node.varName;
+      return (env) => {
+        const list = src(env);
+        if (!isList(list)) return [];
+        const sub = Object.create(env || null);
+        return list.map((v) => { sub[vname] = v; return body(sub); });
+      };
+    }
+    case 'piece': {
+      const cases = node.cases.map((c) => ({ cond: build(c.cond, ctx), value: build(c.value, ctx) }));
+      const other = node.otherwise ? build(node.otherwise, ctx) : null;
+      return (env) => {
+        for (const c of cases) {
+          const t = c.cond(env);
+          if (isList(t)) continue;
+          if (t) return c.value(env);
+        }
+        return other ? other(env) : NaN;    // 어디에도 안 걸리면 "정의되지 않음"
+      };
     }
     default:
       throw new EvalError2(`계산할 수 없는 노드: ${node.type}`);

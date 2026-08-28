@@ -33,6 +33,14 @@ const EXAMPLES = [
   ['P_n = (n, 2^n); 1 <= n <= 8', '점열을 직접 만들어 규칙 확인'],
   ['Q_k = (cos(2πk/7), sin(2πk/7)); 0 <= k <= 6', '정7각형 — 회전 규칙까지 읽어냄'],
   ['a = 2; y = a x^2', '슬라이더로 계수를 끌어 보기'],
+  ['y = x^2 {0 < x < 3}', '정의역 제한 — 조건이 참인 곳만'],
+  ['y = {x < 0: -x, x^2}', '조각별로 정의한 함수'],
+  ['y = [1, 2, 3] x', '리스트로 여러 곡선을 한 번에'],
+  ['x_1 = [1,2,3,4,5]', '자료 리스트 (표 대신)'],
+  ['y_1 = [2.1, 3.9, 6.2, 7.8, 10.1]', '짝이 되는 자료'],
+  ['y_1 ~ a x_1 + b', '최소제곱 회귀 — 계수와 R²를 구한다'],
+  ['(x_1, y_1)', '자료를 점으로 찍기'],
+  ['mean(y_1)', '통계 함수 (mean·median·stdev·total)'],
 ];
 
 const START = ['sin(x)^2 + sin(y)^2 = 0', 'y = x^3 - 3x'];
@@ -59,6 +67,7 @@ class App {
     this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
     if (!this.restore()) START.forEach((s) => this.addObject(s));
     this.applyTheme();
+    this.pushHistory();
     this.renderInputs();
     this.buildExamples();
     this.schedule();
@@ -88,6 +97,7 @@ class App {
   }
 
   removeObject(obj) {
+    this.pushHistory();
     if (obj.defName) this.ctx.defs.delete(obj.defName);
     if (obj.name) this.ctx.seqs.delete(obj.name);
     this.objects = this.objects.filter((o) => o !== obj);
@@ -104,7 +114,8 @@ class App {
       const state = {
         v: 1,
         o: this.objects.filter((o) => o.source.trim()).map((o) => [o.source, o.visible ? 1 : 0]),
-        c: [+this.view.cx.toFixed(10), +this.view.cy.toFixed(10), +this.view.scale.toFixed(6)],
+        c: [+this.view.cx.toFixed(10), +this.view.cy.toFixed(10),
+            +this.view.scaleX.toFixed(6), +this.view.scaleY.toFixed(6)],
         t: this.theme,
         i: this.showIntersections ? 1 : 0,
       };
@@ -129,7 +140,11 @@ class App {
         o.visible = vis !== 0;
       }
       if (Array.isArray(st.c)) {
-        this.view.cx = st.c[0]; this.view.cy = st.c[1]; this.view.scale = st.c[2];
+        this.view.cx = st.c[0];
+        this.view.cy = st.c[1];
+        this.view.scaleX = st.c[2];
+        this.view.scaleY = st.c[3] ?? st.c[2];
+        this.view.locked = Math.abs(this.view.scaleY - this.view.scaleX) < 1e-9;
       }
       if (st.t) this.theme = st.t;
       this.showIntersections = !!st.i;
@@ -140,6 +155,51 @@ class App {
   scheduleSave() {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.save(), 400);
+  }
+
+  /** 식 목록의 현재 모습을 되돌리기 더미에 쌓는다 */
+  pushHistory() {
+    const snap = JSON.stringify(this.objects.map((o) => [o.source, o.visible ? 1 : 0]));
+    this.history = this.history || [];
+    if (this.history[this.history.length - 1] === snap) return;
+    this.history.push(snap);
+    if (this.history.length > 60) this.history.shift();
+    if (!this.restoringHistory) this.future = [];
+  }
+
+  applySnapshot(snap) {
+    this.restoringHistory = true;
+    const list = JSON.parse(snap);
+    this.objects = [];
+    this.ctx = createContext();
+    this.selected = null;
+    for (const [text, vis] of list) {
+      const o = this.addObject(text);
+      o.visible = vis !== 0;
+    }
+    this.needsCompute = true;
+    this.compute();
+    this.renderInputs();
+    this.schedule();
+    this.scheduleSave();
+    this.restoringHistory = false;
+  }
+
+  undo() {
+    this.pushHistory();          // 지금 모습이 더미 맨 위에 있도록 맞춘다
+    if (!this.history || this.history.length < 2) { this.toast('되돌릴 것이 없습니다'); return; }
+    const cur = this.history.pop();
+    (this.future = this.future || []).push(cur);
+    this.applySnapshot(this.history[this.history.length - 1]);
+    this.toast('되돌렸습니다');
+  }
+
+  redo() {
+    if (!this.future || !this.future.length) { this.toast('다시 할 것이 없습니다'); return; }
+    const snap = this.future.pop();
+    this.history.push(snap);
+    this.applySnapshot(snap);
+    this.toast('다시 했습니다');
   }
 
   // ── 계산 · 그리기 ────────────────────────
@@ -229,7 +289,8 @@ class App {
       `x ∈ [${trimNum(b.xmin, digits)}, ${trimNum(b.xmax, digits)}]  ·  1칸 ≈ ${trimNum(span / 10, digits)}`
       + (this.lastCost ? `  ·  ${this.lastCost.toFixed(0)}ms` : '')
       + (this.lastPoints ? `  ·  점 ${this.lastPoints}개` : '')
-      + (this.showIntersections ? `  ·  교점 ${this.intersections.length}개` : '');
+      + (this.showIntersections ? `  ·  교점 ${this.intersections.length}개` : '')
+      + (this.view.locked ? '' : `  ·  y축 ${trimNum(this.view.aspect, 3)}배`);
   }
 
   schedule() {
@@ -279,6 +340,7 @@ class App {
       input.placeholder = '예: x^2 + y^2 = 4';
       input.spellcheck = false;
       input.onchange = () => {
+        this.pushHistory();
         const next = this.updateObject(o, input.value);
         this.renderInputs();
         if (this.selected === next) this.showAnalysis(next);
@@ -340,6 +402,12 @@ class App {
           if (d.isolated?.length) meta.innerHTML += `<span class="tag pt">점 ${d.isolated.length}개</span>`;
           if (d.empty) meta.innerHTML += '<span class="tag none">해 없음</span>';
           if (d.dense) meta.innerHTML += `<span class="tag none">해가 촘촘함(${d.total}+)</span>`;
+        }
+        if (o.data && o.data.branches) {
+          meta.innerHTML += `<span class="tag">곡선 ${o.data.branches}개 묶음</span>`;
+        }
+        if (o.kind === 'regression') {
+          meta.innerHTML += `<span class="tag pt">R² = ${o.r2.toFixed(5)}</span>`;
         }
         if (o.kind === 'value' || o.kind === 'constant') {
           meta.innerHTML += `<span class="tag pt">${escapeHtml(o.label)}</span>`;
@@ -525,7 +593,7 @@ class App {
     let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
     if (x1 - x0 < 1e-6) { x0 -= 1; x1 += 1; }
     if (y1 - y0 < 1e-6) { y0 -= 1; y1 += 1; }
-    this.view.fit(x0, x1, y0, y1, pad);
+    this.view.fit(x0, x1, y0, y1, pad, false);
     this.needsCompute = true;
     this.schedule();
   }
@@ -600,7 +668,9 @@ class App {
       e.preventDefault();
       const rect = c.getBoundingClientRect();
       const f = Math.pow(0.999, e.deltaY);
-      this.view.zoomAt(e.clientX - rect.left, e.clientY - rect.top, f);
+      // shift 를 누르면 세로만, alt 를 누르면 가로만 확대·축소한다
+      const axis = e.shiftKey ? 'y' : e.altKey ? 'x' : 'both';
+      this.view.zoomAt(e.clientX - rect.left, e.clientY - rect.top, f, axis);
       this.needsCompute = true;
       this.deferRecompute();
       this.schedule();
@@ -611,6 +681,14 @@ class App {
       this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
       this.needsCompute = true;
       this.schedule();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '');
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { if (!typing) { e.preventDefault(); this.undo(); } }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { if (!typing) { e.preventDefault(); this.redo(); } }
     });
 
     window.addEventListener('resize', () => {
@@ -653,6 +731,7 @@ class App {
       }
       if (act === 'fit') { this.compute(); this.fitToSolutions(); }
       if (act === 'theme') { this.theme = this.theme === 'dark' ? 'light' : 'dark'; this.applyTheme(); this.scheduleSave(); }
+      if (act === 'square') { this.view.squareUp(); }
       if (act === 'cross') {
         this.showIntersections = !this.showIntersections;
         e.target.classList.toggle('on', this.showIntersections);
@@ -747,7 +826,7 @@ const KIND_LABEL = {
   function: '함수', functionY: 'x=f(y)', implicit: '음함수', region: '영역',
   system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
   sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
-  union: '합집합',
+  union: '합집합', list: '리스트', regression: '회귀', pointseq: '점열',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
 };
 
