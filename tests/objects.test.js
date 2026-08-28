@@ -46,6 +46,45 @@ test('식이 셋 이상인 과결정 연립도 전부 검사한다', () => {
   assert.ok(Math.abs(ok[0][0] - 2) < 1e-6 && Math.abs(ok[0][1] - 1) < 1e-6);
 });
 
+test('한쪽으로 풀린 식이 있으면 대입해서 푼다', () => {
+  const ctx = createContext();
+  const mk = (src) => {
+    const o = createObject(src, ctx, 1, 0);
+    o.data = computeObject(o, B);
+    return o;
+  };
+  const a = mk('x^2+y^2=4 and y=x');
+  assert.ok(a.explicit, '대입 경로를 타야 한다');
+  assert.equal(a.data.points.length, 2);
+  for (const [x, y] of a.data.points) {
+    assert.ok(Math.abs(x * x + y * y - 4) < 1e-9 && Math.abs(y - x) < 1e-9);
+  }
+  const b = mk('x^2+y^2=4 and y=x^2-1');
+  assert.equal(b.data.points.length, 2);
+  for (const [x, y] of b.data.points) {
+    assert.ok(Math.abs(x * x + y * y - 4) < 1e-9 && Math.abs(y - (x * x - 1)) < 1e-9);
+  }
+  // 해가 없을 때도 올바르게 없다고 한다
+  assert.equal(mk('y = x^2 + 0.3 and y = x').data.points.length, 0);
+  // 양쪽 다 음함수면 교점 방식으로 돌아간다
+  const c = mk('x^2+y^2=4 and x^2-y^2=1');
+  assert.equal(c.explicit, undefined);
+  assert.equal(c.data.points.length, 4);
+});
+
+test('대입 경로가 교점 추적보다 훨씬 빠르다', () => {
+  const ctx = createContext();
+  const time = (src) => {
+    const o = createObject(src, ctx, 1, 0);
+    const t = Date.now();
+    computeObject(o, B);
+    return Date.now() - t;
+  };
+  const fast = time('x^2+y^2=4 and y=x');
+  const slow = time('x^2+y^2=4 and x^2-y^2=1');
+  assert.ok(fast * 3 < slow, `대입 ${fast}ms vs 교점 ${slow}ms`);
+});
+
 test('해가 없으면 그렇다고 알린다', () => {
   for (const src of ['x^2+y^2=-1', 'e^x=x']) {
     const o = make(src);

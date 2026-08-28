@@ -53,9 +53,43 @@ test('곡선과 고립해가 함께 있는 경우 (y²=x²(x-1))', () => {
 });
 
 test('곡선 위의 점을 고립해로 오인하지 않는다', () => {
-  for (const f of [(x, y) => x * x + y * y - 4, (x, y) => y - x * x, (x, y) => x + y - 1]) {
-    assert.equal(traceImplicit(f, view).points.length, 0);
+  // 배율을 바꿔 가며 훑어도 매끄러운 곡선에서는 고립해가 하나도 나오면 안 된다
+  const views = [
+    view,
+    { xmin: -1, xmax: 1, ymin: -1, ymax: 1, width: 900, height: 700 },
+    { xmin: -30, xmax: 30, ymin: -20, ymax: 20, width: 900, height: 700 },
+    { xmin: -100, xmax: 100, ymin: -70, ymax: 70, width: 900, height: 700 },
+  ];
+  const curves = {
+    '원': (x, y) => x * x + y * y - 4,
+    '포물선': (x, y) => y - x * x,
+    '직선': (x, y) => x + y - 1,
+    '쌍곡선': (x, y) => x * x - y * y - 1,
+    '1/x': (x, y) => y - 1 / x,
+    'tan': (x, y) => y - Math.tan(x),
+    '렘니스케이트': (x, y) => (x * x + y * y) ** 2 - 2 * (x * x - y * y),
+    '데카르트의 잎': (x, y) => x ** 3 + y ** 3 - 3 * x * y,
+    'sin(xy)': (x, y) => Math.sin(x * y),
+    '첨점 y³=x²': (x, y) => y ** 3 - x * x,     // 원점은 곡선 위의 첨점이지 고립해가 아니다
+    '첨점 y²=x³': (x, y) => y * y - x ** 3,
+    '접하는 두 원': (x, y) => (x * x + y * y - 1) * ((x - 2) ** 2 + y * y - 1),
+  };
+  for (const v of views) {
+    for (const [name, f] of Object.entries(curves)) {
+      assert.equal(traceImplicit(f, v).points.length, 0, `${name} (폭 ${v.xmax - v.xmin})`);
+    }
   }
+});
+
+test('곡선에 바짝 붙은 고립해도 찾아낸다', () => {
+  // y² = x²(x−a) 의 원점은 a > 0 일 때 고립해다. a 가 작아질수록 곡선이 가까워진다.
+  for (const a of [1, 0.5, 0.3, 0.1, 0.05]) {
+    const r = traceImplicit((x, y) => y * y - x * x * (x - a), view);
+    assert.equal(r.points.length, 1, `a = ${a}`);
+    assert.ok(Math.hypot(...r.points[0]) < 1e-6);
+  }
+  // a < 0 이면 원점이 곡선의 매듭점이므로 고립해가 아니다
+  assert.equal(traceImplicit((x, y) => y * y - x * x * (x + 0.3), view).points.length, 0);
 });
 
 test('적응 표본화는 불연속에서 끊는다', () => {

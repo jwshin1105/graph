@@ -256,6 +256,19 @@ function classify(obj, asts, ctx) {
     obj.kind = 'system';
     obj.residuals = residualList(main, ctx);
     obj.vars = free;
+    // y = f(x) 처럼 한 쪽으로 풀린 식이 끼어 있으면 대입해서 1변수 문제로 만든다.
+    // 두 곡선을 각각 추적해 교점을 찾는 것보다 훨씬 빠르고 정확하다.
+    const eqs = collectEqs(main);
+    eqs.forEach((eq, i) => {
+      if (obj.explicit) return;
+      for (const [lhs, rhs, name, other] of [[eq.a, eq.b, 'y', 'x'], [eq.b, eq.a, 'y', 'x'],
+        [eq.a, eq.b, 'x', 'y'], [eq.b, eq.a, 'x', 'y']]) {
+        if (lhs.type === 'var' && lhs.name === name && !freeVars(rhs).has(name)) {
+          obj.explicit = { solved: name, free: other, fn: compile(rhs, ctx), index: i };
+          return;
+        }
+      }
+    });
     // 변수가 하나뿐인 연립(sin x = 0 ∧ cos x = −1)은 곡선 교점이 아니라 공통근 문제다
     obj.oneVar = free.size <= 1 ? ([...free][0] || 'x') : null;
     obj.label = format(main);
@@ -693,6 +706,38 @@ export function computeObject(obj, bounds, opts = {}) {
         return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
       }
       const fns = obj.residuals.map((f) => (x, y) => f({ x, y }));
+
+      if (obj.explicit) {
+        // 대입해서 1변수 방정식으로 푼다
+        const { solved, free: fv, fn, index } = obj.explicit;
+        const lo = fv === 'y' ? b.ymin : b.xmin;
+        const hi = fv === 'y' ? b.ymax : b.xmax;
+        const others = obj.residuals.filter((_, i) => i !== index);
+        const pointAt = (t) => {
+          const env = { [fv]: t };
+          env[solved] = fn(env);
+          return env;
+        };
+        const g0 = (t) => {
+          const env = pointAt(t);
+          return others[0] ? others[0](env) : 0;
+        };
+        const roots = solve1D(g0, lo, hi, 4000).map(([t]) => t);
+        const scale = Math.max(b.xmax - b.xmin, b.ymax - b.ymin);
+        const pts = [];
+        for (const t of roots) {
+          const env = pointAt(t);
+          if (!others.every((r) => Math.abs(r(env)) < 1e-7 * Math.max(1, scale))) continue;
+          const p = [env.x, env.y];
+          if (!isFinite(p[0]) || !isFinite(p[1])) continue;
+          if (pts.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < scale * 1e-6)) continue;
+          pts.push(p);
+        }
+        return {
+          points: pts, isolated: pts, polylines: [], empty: pts.length === 0, ghost: true,
+        };
+      }
+
       const s = fns.length === 2
         ? solveSystem2D(fns[0], fns[1], b, opts)
         : solveSystemN(fns, b, opts);

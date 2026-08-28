@@ -220,11 +220,14 @@ export function* sweepSteps(cfg) {
       else { hi = mid; hiSig = sg; }
       if (k % 5 === 4) yield Math.min(0.95, done / total);
     }
-    const at = (lo + hi) / 2;
-    // 경계 위에서만 나타나는 분류(정확히 포물선이 되는 순간 등)를 확인한다
+    // 경계 위에서만 나타나는 분류(정확히 포물선이 되는 순간 등)를 확인한다.
+    // 이분법이 멈춘 자리가 아니라 "깔끔한 수로 맞춘 자리"에서 재야 한다 —
+    // a = 1e-7 은 아주 작은 원이지만 a = 0 은 점 하나이기 때문이다.
+    const snapped = snapNiceInfo(lo, hi, span);
+    const at = snapped.v;
     const onEdge = sigAt(at);
     const isolated = onEdge && onEdge.key !== loSig.key && onEdge.key !== hiSig.key ? onEdge : null;
-    raw.push({ at, before: loSig, after: hiSig, isolated });
+    raw.push({ at, before: loSig, after: hiSig, isolated, snapped: snapped.snapped });
   }
 
   // 3) 구간별로 묶는다
@@ -289,7 +292,8 @@ export function* sweepSteps(cfg) {
     if (!a.sig || !b.sig || a.sig.key === b.sig.key) continue;
     const ev = events.find((e) => Math.abs(e.at - b.from) <= narrow);
     const near = raw.find((t) => Math.abs(t.at - b.from) < span * 1e-6);
-    const snap = ev ? { v: ev.at, snapped: ev.snapped } : snapNiceInfo(b.from, b.from, span);
+    const snap = ev ? { v: ev.at, snapped: ev.snapped }
+      : (near ? { v: near.at, snapped: near.snapped } : snapNiceInfo(b.from, b.from, span));
     transitions.push({
       at: snap.v, before: a.sig, after: b.sig,
       isolated: ev ? ev.sig : (near ? near.isolated : null),

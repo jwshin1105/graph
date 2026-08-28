@@ -98,19 +98,29 @@ export function traceImplicit(f, view, opts = {}) {
   if (findIsolated) {
     const finite = Array.from(cellMin).filter((v) => isFinite(v)).sort((a, b) => a - b);
     const median = finite.length ? finite[finite.length >> 1] : 0;
-    const thr = median * 0.5;
+    // |f| 가 유난히 작은 셀만 후보로 삼는다. 문턱을 넉넉히 두면 곡선 주변 셀이
+    // 전부 후보가 되어 느려지기만 한다.
+    const thr = median * 0.2;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
         const k = j * nx + i;
         const m = cellMin[k];
-        if (produced[k] || !isFinite(m) || !(m <= thr)) continue;
+        // 곡선 조각이 나온 셀도 건너뛰지 않는다. 고립해가 곡선 시작점과 같은 셀에
+        // 들어 있는 경우(y² = x²(x−0.1) 의 원점)를 놓치기 때문이다.
+        // 진짜 해인지는 아래 findIsolatedZero 의 부호 검사가 가려낸다.
+        if (!isFinite(m) || !(m <= thr)) continue;
+        // 이웃과 견주어 |f| 가 가장 작은 셀만 고른다.
+        // 다만 곡선이 지나간 이웃은 견주지 않는다 — 곡선 옆에 붙은 고립해가
+        // 곡선 쪽 셀에 가려 후보에서 빠지기 때문이다.
         let isMin = true;
         for (let dj = -1; dj <= 1 && isMin; dj++) {
           for (let di = -1; di <= 1; di++) {
             if (!di && !dj) continue;
             const a = i + di, b = j + dj;
             if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
-            if (cellMin[b * nx + a] < m) { isMin = false; break; }
+            const nk = b * nx + a;
+            if (produced[nk]) continue;
+            if (cellMin[nk] < m) { isMin = false; break; }
           }
         }
         if (!isMin) continue;
@@ -123,7 +133,10 @@ export function traceImplicit(f, view, opts = {}) {
   const tol = (Math.max(hx, hy) / refine) * 1.5;
   const polylines = stitch(segments, tol);
   const snap = (v) => (Math.abs(v) < cellDiag * 1e-9 ? 0 : v);
-  const isolated = dropOnCurve(dedupe(points, Math.max(hx, hy) * 0.02), polylines, cellDiag * 0.5)
+  // 곡선 위에 이미 그려진 자리는 고립해가 아니다.
+  // 기준을 넉넉히 잡으면 y² = x²(x−0.1) 처럼 곡선에 가까이 붙은 진짜 고립해까지 잃는다.
+  // 첨점(y³ = x² 의 원점)처럼 곡선 위에 정확히 놓인 점만 걸러내면 되므로 좁게 잡는다.
+  const isolated = dropOnCurve(dedupe(points, Math.max(hx, hy) * 0.02), polylines, cellDiag * 0.15)
     .map(([x, y]) => [snap(x), snap(y)]);
   return { polylines, points: isolated, evals };
 }
@@ -245,19 +258,36 @@ export function findIsolatedZero(F, x0, y0, hx, hy) {
   }
   if (bx < x0 - hx * 0.05 || bx > x0 + hx * 1.05 || by < y0 - hy * 0.05 || by > y0 + hy * 1.05) return null;
 
-  // 두 가지 검증을 통과해야 진짜 고립해로 인정한다.
-  //   (a) |f(p)| 가 주변 값에 비해 무시할 만큼 작다 (실제로 해)
-  //   (b) ∇f(p) ≈ 0     (부호가 안 바뀌는 해 = 접하는 해이므로 기울기가 0.
-  //       이 검사가 없으면 곡선 바로 옆 셀에서 곡선 위의 점을 고립해로 오인한다)
+  // 세 가지를 통과해야 진짜 고립해로 인정한다.
+  //   (a) |f(p)| 가 주변 값에 비해 무시할 만큼 작다 — 실제로 해다
+  //   (b) 각 방향에서 양옆의 부호가 같다 — 부호가 바뀌면 곡선이 지나는 점이지 고립해가 아니다
+  //   (c) 두 배율에서 모두 그렇다 — 한 배율만 보면 표본 간격에 속을 수 있다
   const v0 = Math.abs(F(bx, by));
-  const ex = hx * 0.5, ey = hy * 0.5;
-  const fxp = F(bx + ex, by), fxm = F(bx - ex, by);
-  const fyp = F(bx, by + ey), fym = F(bx, by - ey);
-  const probe = Math.max(Math.abs(fxp), Math.abs(fxm), Math.abs(fyp), Math.abs(fym));
-  if (!isFinite(v0) || !isFinite(probe) || probe === 0) return null;
-  if (v0 >= probe * 1e-6) return null;
-  const gradStep = Math.hypot((fxp - fxm) / 2, (fyp - fym) / 2);
-  if (gradStep > probe * 0.2) return null;
+  if (!isFinite(v0)) return null;
+
+  const sameSignAt = (r) => {
+    const ex = hx * r, ey = hy * r;
+    const fxp = F(bx + ex, by), fxm = F(bx - ex, by);
+    const fyp = F(bx, by + ey), fym = F(bx, by - ey);
+    if (![fxp, fxm, fyp, fym].every(isFinite)) return null;
+    const probe = Math.max(Math.abs(fxp), Math.abs(fxm), Math.abs(fyp), Math.abs(fym));
+    if (probe === 0) return null;
+    // 양옆의 부호가 갈리면 그 방향으로 곡선이 지나간다는 뜻
+    const ok = fxp * fxm >= 0 && fyp * fym >= 0
+      && (fxp + fxm) * (fyp + fym) >= 0;      // 두 방향이 같은 쪽으로 부풀어야 한다
+    return { ok, probe };
+  };
+
+  // 부호 검사는 가까이에서 한다. 넓게 재면 y² = x²(x−0.1) 처럼 곡선이 0.1 밖에
+  // 안 떨어진 고립해에서 탐침이 곡선을 넘어가 부호가 갈려 버린다.
+  // 곡선이 가로지르는 점은 어느 반지름에서든 부호가 갈리므로 좁게 재도 안전하다.
+  const wide = sameSignAt(0.5);
+  const near = sameSignAt(0.12);
+  const closer = sameSignAt(0.03);
+  if (!near || !closer) return null;
+  const probeScale = Math.max(wide ? wide.probe : 0, near.probe);
+  if (v0 >= probeScale * 1e-6) return null;
+  if (!near.ok || !closer.ok) return null;
   return [bx, by];
 }
 

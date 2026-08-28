@@ -112,6 +112,17 @@ test('객체 하나의 서명', () => {
   assert.equal(objectSignature(empty, B, computeObject).label, '해 없음');
 });
 
+test('곡선에 붙은 고립해가 생기는 지점도 찾는다', () => {
+  // y² = x²(x−a) 의 원점은 a > 0 에서 고립해가 된다.
+  // 참값은 a = 0 이지만 격자 해상도가 한계라, 찾은 값에 (근사) 표시가 붙어야 한다.
+  const r = run(['a = 0', 'y^2 = x^2 (x - a)'], 'a', -2, 2);
+  assert.equal(r.transitions.length, 1);
+  assert.ok(r.transitions[0].at > 0 && r.transitions[0].at < 0.1,
+    `분기점 ${r.transitions[0].at}`);
+  assert.equal(r.transitions[0].approx, true);
+  assert.match(r.transitions[0].after.label, /고립해/);
+});
+
 test('훑기 결과는 실행할 때마다 같다', () => {
   const key = () => {
     const r = run(['a = 1', 'x^2 + a y^2 = 1'], 'a', -2, 2);
@@ -121,6 +132,9 @@ test('훑기 결과는 실행할 때마다 같다', () => {
   const b = key();
   assert.equal(a, b);
   assert.equal(a, '0|1');       // 분기점 a=0, 원이 되는 순간 a=1
+  // "그 순간" 표시도 매번 같아야 한다 (깔끔한 수로 맞춘 자리에서 재므로)
+  const r = run(['a = 1', 'x^2 + y^2 = a'], 'a', -1, 3);
+  assert.match(r.transitions[0].isolated.label, /고립해 1개/);
 });
 
 test('깔끔한 수로 맞춘 값에는 근사 표시를 붙이지 않는다', () => {
