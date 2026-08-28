@@ -2,7 +2,8 @@
 
 import { View } from './view.js';
 import { Renderer, PALETTE } from './renderer.js';
-import { createContext, createObject, computeObject, analyzeObject, missingRefs } from './objects.js';
+import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf } from './objects.js';
+import { analyzePointSet } from '../analysis/pointset.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const EXAMPLES = [
@@ -29,6 +30,9 @@ const EXAMPLES = [
   ['y = integral(sin(u), u, 0, x)', '정적분으로 정의한 함수'],
   ['y = floor(x)', '계단함수 — 도약에서 선을 끊는다'],
   ['x^3 + y^3 = 3x y', '데카르트의 잎 (매듭점 포함)'],
+  ['P_n = (n, 2^n); 1 <= n <= 8', '점열을 직접 만들어 규칙 확인'],
+  ['Q_k = (cos(2πk/7), sin(2πk/7)); 0 <= k <= 6', '정7각형 — 회전 규칙까지 읽어냄'],
+  ['a = 2; y = a x^2', '슬라이더로 계수를 끌어 보기'],
 ];
 
 const START = ['sin(x)^2 + sin(y)^2 = 0', 'y = x^3 - 3x'];
@@ -45,13 +49,16 @@ class App {
     this.selected = null;
     this.hover = null;
     this.needsCompute = true;
+    this.showIntersections = false;
+    this.intersections = [];
     this.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 
     this.applyTheme();
     this.bind();
     this.renderer.resize();
     this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
-    START.forEach((s) => this.addObject(s));
+    if (!this.restore()) START.forEach((s) => this.addObject(s));
+    this.applyTheme();
     this.renderInputs();
     this.buildExamples();
     this.schedule();
@@ -90,6 +97,51 @@ class App {
     this.schedule();
   }
 
+  // ── 저장 · 복원 ──────────────────────────
+  /** 현재 상태를 주소창 해시와 로컬 저장소에 남긴다 */
+  save() {
+    try {
+      const state = {
+        v: 1,
+        o: this.objects.filter((o) => o.source.trim()).map((o) => [o.source, o.visible ? 1 : 0]),
+        c: [+this.view.cx.toFixed(10), +this.view.cy.toFixed(10), +this.view.scale.toFixed(6)],
+        t: this.theme,
+        i: this.showIntersections ? 1 : 0,
+      };
+      const enc = btoa(unescape(encodeURIComponent(JSON.stringify(state))))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      history.replaceState(null, '', `#${enc}`);
+      localStorage.setItem('graph-state', enc);
+    } catch { /* 저장은 실패해도 계산에는 지장이 없다 */ }
+  }
+
+  restore() {
+    const src = location.hash.slice(1) || (() => {
+      try { return localStorage.getItem('graph-state') || ''; } catch { return ''; }
+    })();
+    if (!src) return false;
+    try {
+      const json = decodeURIComponent(escape(atob(src.replace(/-/g, '+').replace(/_/g, '/'))));
+      const st = JSON.parse(json);
+      if (!st || !Array.isArray(st.o)) return false;
+      for (const [text, vis] of st.o) {
+        const o = this.addObject(text);
+        o.visible = vis !== 0;
+      }
+      if (Array.isArray(st.c)) {
+        this.view.cx = st.c[0]; this.view.cy = st.c[1]; this.view.scale = st.c[2];
+      }
+      if (st.t) this.theme = st.t;
+      this.showIntersections = !!st.i;
+      return this.objects.length > 0;
+    } catch { return false; }
+  }
+
+  scheduleSave() {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.save(), 400);
+  }
+
   // ── 계산 · 그리기 ────────────────────────
   compute() {
     // 보이는 영역보다 조금 넓게 계산해 둔다. 끌기 중에는 다시 풀지 않으므로
@@ -110,15 +162,18 @@ class App {
         o.runtimeError = e.message;
       }
     }
+    this.intersections = this.showIntersections ? intersectionsOf(this.objects, b) : [];
     this.needsCompute = false;
     this.lastCost = performance.now() - t0;
     this.lastPoints = pts;
+    this.scheduleSave();
   }
 
   draw() {
     const r = this.renderer;
     const b = this.view.bounds();
     r.clear();
+    r.beginFrame();
     r.drawGrid();
 
     for (const o of this.objects) {
@@ -147,10 +202,21 @@ class App {
       }
     }
 
+    if (this.showIntersections && this.intersections.length) {
+      r.drawPoints(this.intersections, this.colors().mark, 5, { hollow: true });
+      if (this.intersections.length <= 12) {
+        r.drawLabels(this.intersections.map(([x, y]) => ({ x, y, text: `(${pretty(x)}, ${pretty(y)})` })),
+          this.colors().mark);
+      }
+    }
     if (this.hover) {
       r.drawCrosshair(this.hover.px, this.hover.py, this.hover.text);
     }
     this.updateStatus();
+  }
+
+  colors() {
+    return { mark: this.theme === 'dark' ? '#fbbf24' : '#b45309' };
   }
 
   updateStatus() {
@@ -162,7 +228,8 @@ class App {
     el.textContent =
       `x ∈ [${trimNum(b.xmin, digits)}, ${trimNum(b.xmax, digits)}]  ·  1칸 ≈ ${trimNum(span / 10, digits)}`
       + (this.lastCost ? `  ·  ${this.lastCost.toFixed(0)}ms` : '')
-      + (this.lastPoints ? `  ·  점 ${this.lastPoints}개` : '');
+      + (this.lastPoints ? `  ·  점 ${this.lastPoints}개` : '')
+      + (this.showIntersections ? `  ·  교점 ${this.intersections.length}개` : '');
   }
 
   schedule() {
@@ -216,6 +283,7 @@ class App {
         this.renderInputs();
         if (this.selected === next) this.showAnalysis(next);
         this.schedule();
+        this.scheduleSave();
       };
       input.onkeydown = (e) => {
         if (e.key === 'Enter') {
@@ -283,9 +351,49 @@ class App {
           meta.append(s);
         }
         row.append(meta);
+        if (o.slider) row.append(this.buildSlider(o));
       }
       host.append(row);
     }
+  }
+
+  /** 상수 정의에 붙는 슬라이더 — 값을 끌면 그 값을 쓰는 식이 함께 움직인다 */
+  buildSlider(o) {
+    const wrap = document.createElement('div');
+    wrap.className = 'slider-row';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = o.slider.min;
+    input.max = o.slider.max;
+    input.step = o.slider.step;
+    input.value = o.value;
+    const out = document.createElement('span');
+    out.className = 'slider-val';
+    out.textContent = `${o.defName} = ${trimNum(o.value, 4)}`;
+
+    const apply = (v) => {
+      o.value = v;
+      const def = this.ctx.defs.get(o.defName);
+      if (def) { def.body = { type: 'num', value: v }; def.compiled = null; }
+      o.label = `${o.defName} = ${pretty(v)}`;
+      out.textContent = `${o.defName} = ${trimNum(v, 4)}`;
+      this.needsCompute = true;
+      this.schedule();
+    };
+    input.oninput = () => { this.deferRecompute(90); apply(parseFloat(input.value)); };
+    input.onchange = () => {
+      // 손을 놓으면 원래 입력 문자열도 갱신해 두어야 저장·공유에 값이 남는다
+      const keep = o.source.includes(';') ? o.source.slice(o.source.indexOf(';')) : '';
+      o.source = `${o.defName} = ${trimNum(parseFloat(input.value), 6)}${keep}`;
+      const el = [...document.querySelectorAll('#inputs input.expr')][this.objects.indexOf(o)];
+      if (el) el.value = o.source;
+      this.deferCompute = false;
+      this.needsCompute = true;
+      this.schedule();
+      this.scheduleSave();
+    };
+    wrap.append(input, out);
+    return wrap;
   }
 
   buildExamples() {
@@ -311,6 +419,37 @@ class App {
     }
   }
 
+  showIntersectionAnalysis() {
+    const host = document.getElementById('analysis');
+    host.innerHTML = '';
+    if (!this.intersections.length) {
+      host.innerHTML = '<div class="an-empty">보이는 범위 안에서 곡선끼리 만나는 점이 없습니다.</div>';
+      return;
+    }
+    // 곡선 쌍마다 따로 보아야 규칙이 드러난다.
+    // (여러 쌍의 교점을 한 덩어리로 섞으면 아무 규칙도 안 보인다)
+    const groups = this.intersections.groups || [];
+    const findings = [];
+    for (const g of groups) {
+      const r = analyzePointSet(g.points);
+      const head = `${g.labels[0]} ∩ ${g.labels[1]}`;
+      findings.push({
+        type: 'pair', title: `${head} — 교점 ${g.points.length}개`, confidence: 1,
+        detail: g.points.slice(0, 6).map(([x, y]) => `(${pretty(x)}, ${pretty(y)})`).join(', ')
+          + (g.points.length > 6 ? ' …' : ''),
+      });
+      for (const f of r.findings.slice(0, 3)) {
+        findings.push({ ...f, title: `└ ${f.title}`, confidence: Math.min(f.confidence ?? 1, 0.99) });
+      }
+    }
+    this.paintAnalysis({
+      title: '교점 분석',
+      lead: `${groups.length}쌍의 곡선이 모두 ${this.intersections.length}개 점에서 만납니다.`,
+      findings,
+      summary: '교점',
+    }, '곡선끼리 만나는 점');
+  }
+
   showAnalysis(obj) {
     const host = document.getElementById('analysis');
     host.innerHTML = '';
@@ -324,10 +463,22 @@ class App {
       host.innerHTML = '<div class="an-empty">이 형태는 아직 분석 대상이 아닙니다.</div>';
       return;
     }
+    this.paintAnalysis(res, obj.label);
+  }
+
+  paintAnalysis(res, subject) {
+    const host = document.getElementById('analysis');
+    host.innerHTML = '';
     const h = document.createElement('div');
     h.className = 'an-head';
-    h.textContent = `${res.title} — ${obj.label}`;
+    h.textContent = `${res.title} — ${subject}`;
     host.append(h);
+    if (res.note) {
+      const n = document.createElement('div');
+      n.className = 'an-note';
+      n.textContent = `ℹ ${res.note}`;
+      host.append(n);
+    }
     if (res.lead || res.summary) {
       const l = document.createElement('div');
       l.className = 'an-lead';
@@ -383,16 +534,44 @@ class App {
   bind() {
     const c = this.canvas;
     let dragging = false, lastX = 0, lastY = 0, moved = false;
+    const active = new Map();       // 손가락 두 개를 추적해 핀치 줌을 지원한다
+    let pinch = null;
+
+    const pinchState = () => {
+      const [a, b] = [...active.values()];
+      const rect = c.getBoundingClientRect();
+      return {
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        mx: (a.x + b.x) / 2 - rect.left,
+        my: (a.y + b.y) / 2 - rect.top,
+      };
+    };
 
     c.addEventListener('pointerdown', (e) => {
-      dragging = true; moved = false;
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.deferCompute = true;
+      if (active.size === 2) { pinch = pinchState(); dragging = false; return; }
+      dragging = true; moved = false;
       lastX = e.clientX; lastY = e.clientY;
       c.setPointerCapture(e.pointerId);
     });
     c.addEventListener('pointermove', (e) => {
       const rect = c.getBoundingClientRect();
       const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      if (active.has(e.pointerId)) active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (active.size === 2 && pinch) {
+        const now = pinchState();
+        if (pinch.dist > 0 && now.dist > 0) {
+          this.view.zoomAt(now.mx, now.my, now.dist / pinch.dist);
+          this.view.panPx(now.mx - pinch.mx, now.my - pinch.my);
+        }
+        pinch = now;
+        moved = true;
+        this.needsCompute = true;
+        this.schedule();
+        return;
+      }
       if (dragging) {
         moved = true;
         this.view.panPx(e.clientX - lastX, e.clientY - lastY);
@@ -404,7 +583,10 @@ class App {
       this.hover = this.probe(px, py);
       this.schedule();
     });
-    const end = () => {
+    const end = (e) => {
+      if (e && active.has(e.pointerId)) active.delete(e.pointerId);
+      if (active.size < 2) pinch = null;
+      if (active.size > 0) return;
       dragging = false;
       this.deferCompute = false;
       if (moved) { this.needsCompute = true; }
@@ -470,11 +652,43 @@ class App {
         this.view.scale = Math.min(this.view.width / 13, this.view.height / 9);
       }
       if (act === 'fit') { this.compute(); this.fitToSolutions(); }
-      if (act === 'theme') { this.theme = this.theme === 'dark' ? 'light' : 'dark'; this.applyTheme(); }
+      if (act === 'theme') { this.theme = this.theme === 'dark' ? 'light' : 'dark'; this.applyTheme(); this.scheduleSave(); }
+      if (act === 'cross') {
+        this.showIntersections = !this.showIntersections;
+        e.target.classList.toggle('on', this.showIntersections);
+        this.needsCompute = true;
+        this.compute();
+        if (this.showIntersections) this.showIntersectionAnalysis();
+      }
+      if (act === 'link') { this.copyLink(); return; }
       if (act === 'png') { this.savePng(); return; }
       this.needsCompute = true;
       this.schedule();
     });
+  }
+
+  async copyLink() {
+    this.save();
+    const url = location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      this.toast('링크를 복사했습니다');
+    } catch {
+      this.toast('주소창의 링크를 복사해 주세요');
+    }
+  }
+
+  toast(text) {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      document.getElementById('stage').append(el);
+    }
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
   }
 
   savePng() {

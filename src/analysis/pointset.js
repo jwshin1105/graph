@@ -64,6 +64,13 @@ export function analyzePointSet(points, opts = {}) {
     for (const f of seq.findings.slice(0, 3)) {
       push({ ...f, title: `y 값의 규칙: ${f.title}`, source: 'sequence' });
     }
+  } else if (n >= 4) {
+    // x 가 고르지 않아도 x 좌표 자체가 규칙을 이룰 수 있다
+    // (삼각방정식의 해처럼 갈래 등차수열인 경우가 대표적)
+    const xr = analyzeSequence(xs, { name: 'x' });
+    for (const f of xr.findings.filter((g) => g.exact).slice(0, 2)) {
+      push({ ...f, title: `x 좌표의 규칙: ${f.title}`, source: 'sequence' });
+    }
   }
 
   // 2) 공선성 — 점 두 개는 언제나 한 직선 위에 있으므로 셋 이상일 때만 의미가 있다
@@ -127,7 +134,9 @@ export function analyzePointSet(points, opts = {}) {
   if (n >= 4 && new Set(xs.map((x) => Math.round(x * 1e9))).size === n) {
     const models = fitModels(xs, ys, { maxDegree: Math.min(4, n - 2) });
     const best = models[0];
-    if (best && best.r2 > 0.9999 && !findings.some((f) => f.source === 'sequence' && f.confidence >= 1)) {
+    const yConstant = ys.every((v2) => Math.abs(v2 - ys[0]) < 1e-9 * Math.max(1, Math.abs(ys[0])));
+    if (best && best.r2 > 0.9999 && !yConstant
+        && !findings.some((f) => f.source === 'sequence' && f.confidence >= 1)) {
       push({ type: 'relation', title: `y 와 x 의 관계: ${best.name}`, confidence: Math.min(0.95, best.r2),
         detail: `R² = ${best.r2.toFixed(8)}`, formula: best.formula });
     }

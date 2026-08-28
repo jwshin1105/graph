@@ -111,8 +111,19 @@ function build(node, ctx) {
       const name = node.name;
       if (SPECIAL_FORMS.has(name)) return buildSpecial(node, ctx);
       const args = node.args.map((a) => build(a, ctx));
+      if (node.primes) {
+        // f'(x), f''(x): 사용자 정의 함수의 수치 도함수.
+        // 아래 일반 호출 분기보다 먼저 걸러야 프라임이 무시되지 않는다.
+        const order = node.primes;
+        return (env) => {
+          const d = ctx.defs.get(name);
+          if (!d || d.params.length !== 1) return NaN;
+          const x = args[0](env);
+          return numDeriv((t) => callUser(d, [t], ctx, env), x, order);
+        };
+      }
       const def = ctx.defs.get(name);
-      if (def || (!FUNCTIONS[name] && !node.primes)) {
+      if (def || !FUNCTIONS[name]) {
         return (env) => {
           const d = ctx.defs.get(name);
           if (!d) {
@@ -121,16 +132,6 @@ function build(node, ctx) {
             return NaN;
           }
           return callUser(d, args.map((a) => a(env)), ctx, env);
-        };
-      }
-      if (node.primes) {
-        // f'(x): 사용자 정의 함수의 수치 도함수 (기호 미분은 상위 계층에서 처리)
-        const order = node.primes;
-        return (env) => {
-          const d = ctx.defs.get(name);
-          if (!d) return NaN;
-          const x = args[0](env);
-          return numDeriv((t) => callUser(d, [t], ctx, env), x, order);
         };
       }
       const spec = FUNCTIONS[name];

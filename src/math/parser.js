@@ -290,7 +290,10 @@ class Parser {
     if (tk.type === 'name') {
       this.next();
       const name = tk.value;
-      if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) return num(CONSTANTS[name]);
+      if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) {
+        // 값은 숫자로 쓰되 원래 이름을 남겨 두어 식을 다시 적을 때 π 로 보이게 한다
+        return { type: 'num', value: CONSTANTS[name], sym: name };
+      }
 
       // 도함수 표기 f'(x)
       let primes = 0;
@@ -368,7 +371,7 @@ function precOf(node) {
 export function format(node) {
   if (!node) return '';
   switch (node.type) {
-    case 'num': return fmtNum(node.value);
+    case 'num': return node.sym || fmtNum(node.value);
     case 'var': return node.name;
     case 'index': {
       const idx = format(node.index);

@@ -3,10 +3,11 @@
 import { parse, freeVars, format, ParseError } from '../math/parser.js';
 import { compile, residual, residualList, predicate, makeContext } from '../math/evaluator.js';
 import { derivative } from '../math/derivative.js';
-import { FUNCTIONS } from '../math/functions.js';
+import { FUNCTIONS, CONSTANTS } from '../math/functions.js';
 import { traceImplicit } from '../engine/implicit.js';
 import { sampleFunction, sampleParametric, samplePolar } from '../engine/sampler.js';
-import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask } from '../engine/solvers.js';
+import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask, polylineIntersections } from '../engine/solvers.js';
+import { newton2D } from '../math/numeric.js';
 import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
@@ -36,6 +37,21 @@ export function createObject(source, ctx, id, colorIndex) {
   const parts = source.split(';').map((s) => s.trim()).filter(Boolean);
   if (!parts.length) { obj.kind = 'empty'; return obj; }
 
+  // e, π 처럼 이미 상수인 이름을 변수로 쓰면 "2.718 = 0.5" 라는 참·거짓 판정이 되어 버린다
+  const reserved = /^\s*([A-Za-zπφτ]+)\s*=[^=]/.exec(`${source} `);
+  if (reserved) {
+    const lhs = reserved[1];
+    const isConst = (t) => Object.prototype.hasOwnProperty.call(CONSTANTS, t);
+    // 'e = 0.5' 는 "2.718 = 0.5" 라는 참·거짓 판정이 되어 버린다.
+    // 'ee = 1' 처럼 상수 글자만으로 이루어진 이름도 마찬가지다.
+    const bad = isConst(lhs) || (lhs.length > 1 && [...lhs].every((ch) => isConst(ch)));
+    if (bad) {
+      obj.kind = 'error';
+      obj.error = `'${lhs}' 는 이미 정해진 상수라서 이름으로 쓸 수 없습니다. 다른 글자를 써 주세요.`;
+      return obj;
+    }
+  }
+
   try {
     const asts = parts.map((p) => parse(p, knownNames(ctx)));
     classify(obj, asts, ctx);
@@ -58,6 +74,24 @@ function classify(obj, asts, ctx) {
   const main = asts[asts.length - 1];
   obj.asts = asts;
   obj.ranges = ranges;
+
+  // ── 점열 정의: P_n = (n, n²) — 값이 점인 수열
+  const ptSeq = asts.find((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index'
+    && a.b.type === 'tuple' && a.b.items.length === 2);
+  if (ptSeq) {
+    const name = ptSeq.a.base.type === 'var' ? ptSeq.a.base.name : 'P';
+    const idxVar = ptSeq.a.index.type === 'var' ? ptSeq.a.index.name : 'n';
+    obj.kind = 'pointseq';
+    obj.name = name;
+    obj.varName = idxVar;
+    obj.fx = compile(ptSeq.b.items[0], ctx);
+    obj.fy = compile(ptSeq.b.items[1], ctx);
+    obj.n0 = 1;
+    const given = ranges.find((r) => r.name === idxVar);
+    obj.nRange = given ? [Math.round(given.range[0]), Math.round(given.range[1])] : null;
+    obj.label = `${name}_${idxVar} = (${format(ptSeq.b.items[0])}, ${format(ptSeq.b.items[1])})`;
+    return obj;
+  }
 
   // ── 수열 정의: a_n = …  (앞선 조각들은 초기값 a_1 = 1 처럼 취급)
   const seqDef = asts.find((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index');
@@ -101,6 +135,12 @@ function classify(obj, asts, ctx) {
     obj.defName = name;
     obj.value = compile(main.b, ctx)({});
     obj.label = `${name} = ${pretty(obj.value)}`;
+    // 값을 손으로 끌어 볼 수 있게 슬라이더 범위를 붙인다.
+    // "a = 2; 0 <= a <= 5" 처럼 직접 지정할 수 있고, 없으면 값에서 유추한다.
+    const given = ranges.find((r) => r.name === name);
+    obj.slider = given ? { min: given.range[0], max: given.range[1] }
+      : defaultSliderRange(obj.value);
+    obj.slider.step = niceStep((obj.slider.max - obj.slider.min) / 100);
     return obj;
   }
 
@@ -280,14 +320,14 @@ function classify(obj, asts, ctx) {
   return obj;
 }
 
-/** "a <= t <= b" 또는 "a < t < b" 를 [a, b] 범위로 해석 */
+/** "a <= t <= b" 를 [a, b] 범위로 해석 (매개변수 범위·슬라이더 범위에 함께 쓰인다) */
 function asRange(node) {
   if (node.type !== 'logic' || node.op !== 'and') return null;
   const { a, b } = node;
   if (a.type !== 'cmp' || b.type !== 'cmp') return null;
   const varOf = (n) => (n.type === 'var' ? n.name : null);
   const name = varOf(a.b) || varOf(b.a);
-  if (!name || !ANGLE_VARS.has(name)) return null;
+  if (!name) return null;
   const ctx0 = makeContext();
   const num = (n) => {
     try {
@@ -299,6 +339,21 @@ function asRange(node) {
   const hi = num(b.b);
   if (lo === null || hi === null || !(hi > lo)) return null;
   return { name, range: [lo, hi] };
+}
+
+/** 슬라이더 기본 범위: 값의 크기에 맞춰 대칭 구간을 잡는다 */
+function defaultSliderRange(v) {
+  if (!isFinite(v)) return { min: -10, max: 10 };
+  let hi = niceStep(Math.max(1, Math.abs(v) * 2));
+  while (hi < Math.abs(v)) hi = niceStep(hi * 2);
+  return { min: v < 0 ? -hi : 0, max: hi };
+}
+
+function niceStep(rough) {
+  if (!(rough > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(rough)));
+  const r = rough / p;
+  return (r < 1.5 ? 1 : r < 3.5 ? 2 : r < 7.5 ? 5 : 10) * p;
 }
 
 function pickRange(ranges, name) {
@@ -538,6 +593,18 @@ export function computeObject(obj, bounds) {
     case 'point':
     case 'points':
       return { points: obj.points, isolated: obj.points, polylines: [] };
+    case 'pointseq': {
+      const [lo, hi] = obj.nRange || [obj.n0, obj.n0 + 19];
+      const v = obj.varName;
+      const pts = [];
+      for (let n = lo; n <= hi && pts.length < 400; n++) {
+        const x = obj.fx({ [v]: n });
+        const y = obj.fy({ [v]: n });
+        if (isFinite(x) && isFinite(y)) pts.push([x, y]);
+      }
+      obj.points = pts;
+      return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
+    }
     case 'sequence': {
       const terms = sequenceTerms(obj, b);
       obj.terms = terms;
@@ -587,6 +654,56 @@ function sequenceTerms(obj, bounds) {
     out.push(v);
   }
   return out;
+}
+
+/**
+ * 화면에 그려진 곡선들끼리의 교점.
+ * 폴리라인 교차로 후보를 잡고, 두 식이 모두 잔차 함수를 갖고 있으면 뉴턴법으로 정련한다.
+ */
+export function intersectionsOf(objects, bounds) {
+  const curves = objects.filter((o) =>
+    o.visible !== false && o.data && (o.data.polylines || []).length
+    && ['function', 'functionY', 'implicit', 'polar', 'parametric', 'union'].includes(o.kind));
+  const scale = Math.max(bounds.xmax - bounds.xmin, bounds.ymax - bounds.ymin);
+  const groups = [];
+  const all = [];
+  for (let i = 0; i < curves.length; i++) {
+    for (let j = i + 1; j < curves.length; j++) {
+      const raw = polylineIntersections(curves[i].data.polylines, curves[j].data.polylines);
+      if (!raw.length) continue;
+      const F = residualOf(curves[i]);
+      const G = residualOf(curves[j]);
+      const pts = [];
+      for (const p of raw) {
+        let q = p;
+        if (F && G) q = newton2D(F, G, p[0], p[1]) || p;
+        if (!isFinite(q[0]) || !isFinite(q[1])) continue;
+        if (pts.some((r) => Math.hypot(r[0] - q[0], r[1] - q[1]) < scale * 1e-6)) continue;
+        pts.push(q);
+      }
+      if (!pts.length) continue;
+      pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      groups.push({ labels: [curves[i].label, curves[j].label], points: pts });
+      for (const q of pts) {
+        if (!all.some((r) => Math.hypot(r[0] - q[0], r[1] - q[1]) < scale * 1e-6)) all.push(q);
+      }
+    }
+  }
+  all.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // 배열로도, 쌍별 묶음으로도 쓸 수 있게 둘 다 돌려준다
+  all.groups = groups;
+  return all;
+}
+
+/** 객체를 f(x,y)=0 형태의 잔차 함수로 (가능한 경우) */
+function residualOf(o) {
+  if (o.kind === 'implicit' && o.f) return (x, y) => o.f({ x, y });
+  if (o.kind === 'function' && o.fn) {
+    const v = o.substitute || 'x';
+    return (x, y) => y - o.fn({ [v]: x });
+  }
+  if (o.kind === 'functionY' && o.fn) return (x, y) => x - o.fn({ y });
+  return null;
 }
 
 // ── 분석 ────────────────────────────────────────────────────
@@ -652,6 +769,15 @@ export function analyzeObject(obj, bounds, ctx) {
       case 'point': {
         const r = analyzePointSet(obj.points);
         return { title: '점열 분석', ...r };
+      }
+      case 'pointseq': {
+        const d = computeObject(obj, bounds);
+        const r = analyzePointSet(d.points);
+        const [lo, hi] = obj.nRange || [obj.n0, obj.n0 + 19];
+        return { title: '점열 분석', ...r,
+          lead: `${obj.varName} = ${lo}…${hi} 에서 얻은 점 ${d.points.length}개: `
+            + d.points.slice(0, 5).map(([x, y]) => `(${pretty(x)}, ${pretty(y)})`).join(', ')
+            + (d.points.length > 5 ? ' …' : '') };
       }
       case 'sequence': {
         const terms = obj.terms || sequenceTerms(obj, bounds);

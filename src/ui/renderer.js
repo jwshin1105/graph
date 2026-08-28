@@ -153,27 +153,37 @@ export class Renderer {
     ctx.restore();
   }
 
+  /** 좌표 라벨. 이미 놓인 라벨과 겹치면 건너뛴다(빽빽하면 아예 안 그린다). */
   drawLabels(items, color) {
     const { ctx, view } = this;
     ctx.save();
     ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillStyle = color;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
+    const placed = this._placedLabels || (this._placedLabels = []);
+    const hits = (r) => placed.some((q) =>
+      r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
+
     for (const { x, y, text } of items) {
       const px = view.toPxX(x), py = view.toPxY(y);
       if (px < -50 || px > view.width + 50 || py < -20 || py > view.height + 20) continue;
-      const w = ctx.measureText(text).width;
+      const w = ctx.measureText(text).width + 6;
+      const box = { x: px + 6, y: py - 15, w, h: 14 };
+      if (hits(box)) continue;
+      placed.push(box);
       ctx.save();
       ctx.globalAlpha = 0.85;
       ctx.fillStyle = this.colors().bg;
-      ctx.fillRect(px + 6, py - 15, w + 6, 14);
+      ctx.fillRect(box.x, box.y, box.w, box.h);
       ctx.restore();
       ctx.fillStyle = color;
       ctx.fillText(text, px + 9, py - 3);
     }
     ctx.restore();
   }
+
+  /** 프레임마다 라벨 배치를 초기화한다 */
+  beginFrame() { this._placedLabels = []; }
 
   /** 부등식 영역을 반투명하게 칠한다 */
   drawMask(maskInfo, color, bounds) {

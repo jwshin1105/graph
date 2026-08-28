@@ -368,6 +368,13 @@ export function analyzeSequence(values, opts = {}) {
     }
   }
 
+  // 4.5) 갈래 등차수열: 서로 엇갈려 놓인 여러 등차수열
+  //  sin x = 1/2 의 해처럼 "x = π/6 + 2nπ 또는 x = 5π/6 + 2nπ" 꼴을 잡아낸다.
+  if (!findings.some((f) => f.exact) && v.length >= 4) {
+    const inter = interleaved(v, n0, nm, nvar);
+    if (inter) push(inter);
+  }
+
   // 5) 주기
   for (let p = 1; p <= Math.floor(v.length / 2); p++) {
     let ok = true;
@@ -478,6 +485,46 @@ function longestFiniteRun(values) {
     i = j;
   }
   return best;
+}
+
+/**
+ * m 갈래로 엇갈린 등차수열인지 본다.
+ * v 를 인덱스 mod m 으로 쪼갰을 때 각 갈래가 모두 같은 공차의 등차수열이면 그렇다.
+ */
+function interleaved(v, n0, nm, nvar) {
+  const scale = scaleOf(v);
+  for (let m = 2; m <= 3; m++) {
+    if (v.length < m * 2 + 1) continue;
+    const parts = [];
+    for (let r = 0; r < m; r++) {
+      const part = [];
+      for (let i = r; i < v.length; i += m) part.push(v[i]);
+      if (part.length < 2) { parts.length = 0; break; }
+      parts.push(part);
+    }
+    if (parts.length !== m) continue;
+    const ds = parts.map((p) => p[1] - p[0]);
+    const ok = parts.every((p, k) => p.every((x, i) => REL(x - (p[0] + ds[k] * i), scale)))
+      && ds.every((d) => REL(d - ds[0], scale)) && Math.abs(ds[0]) > 1e-15;
+    if (!ok) continue;
+    const d = ds[0];
+    // 대표항은 절댓값이 가장 작은 항으로 고른다.
+    // 그래야 -11π/6 + 2πk 대신 교과서와 같은 π/6 + 2πk 로 적힌다.
+    const heads = parts.map((p) => p.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a)));
+    const forms = heads.map((h) => `${pretty(h)}${signed(d)}·k`);
+    const checks = v.length - m;
+    return {
+      type: 'interleaved',
+      title: `${m}갈래 등차수열`,
+      detail: `한 줄로는 등차가 아니지만, ${m}개 수열이 번갈아 놓인 것으로 보면 `
+        + `모두 공차 ${pretty(d)} 인 등차수열입니다.`,
+      formula: forms.map((f2) => `${nm} = ${f2}`).join('   또는   ') + '   (k = 0, 1, 2, …)',
+      predict: null,
+      next: [0, 1, 2].map((k) => v[v.length - m + k] + d),
+      confidence: conf(checks),
+    };
+  }
+  return null;
 }
 
 function closedForm(v, n0, roots, nm, nvar) {
