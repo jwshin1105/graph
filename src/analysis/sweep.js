@@ -19,7 +19,7 @@ export const SWEEP_OPTS = {};
  * 객체 하나의 이산 특징.
  * @returns {{key:string, label:string}|null}
  */
-export function objectSignature(obj, bounds, compute, opts = SWEEP_OPTS) {
+export function objectSignature(obj, bounds, compute, opts = SWEEP_OPTS, exactKind = null) {
   let d;
   try {
     d = compute(obj, bounds, opts);
@@ -32,13 +32,17 @@ export function objectSignature(obj, bounds, compute, opts = SWEEP_OPTS) {
     case 'implicit': {
       const branches = (d.polylines || []).length;
       const pts = (d.points || []).length;
-      const kind = conicKind(d);
+
+      // 종류는 식에서 기호적으로 뽑는 쪽을 먼저 쓰고, 그게 안 되면 추적한 곡선을 맞춰 본다.
+      // 종류를 알면 가지 수는 서명에서 뺀다 — 화면 밖으로 잘린 쌍곡선의 팔이 2개로도
+      // 4개로도 세어져서, 분류가 그대로인데도 경계가 있는 것처럼 보이기 때문이다.
+      const kind = (exactKind ? exactKind(obj) : null) || conicKind(d);
       const parts = [];
       if (kind) parts.push(kind);
-      if (branches) parts.push(`가지 ${branches}개`);
+      else if (branches) parts.push(`가지 ${branches}개`);
       if (pts) parts.push(`고립해 ${pts}개`);
       if (!parts.length) parts.push('해 없음');
-      return { key: `i|${kind || ''}|${branches}|${pts}`, label: parts.join(' · ') };
+      return { key: `i|${kind || ''}|${kind ? '' : branches}|${pts}`, label: parts.join(' · ') };
     }
     case 'function':
     case 'functionY': {
@@ -141,11 +145,11 @@ function countFeatures(f, lo, hi, samples = 700) {
 }
 
 /** 여러 객체의 서명을 하나로 묶는다 */
-export function combinedSignature(objects, bounds, compute, opts = SWEEP_OPTS) {
+export function combinedSignature(objects, bounds, compute, opts = SWEEP_OPTS, exactKind = null) {
   const parts = [];
   const labels = [];
   for (const o of objects) {
-    const s = objectSignature(o, bounds, compute, opts);
+    const s = objectSignature(o, bounds, compute, opts, exactKind);
     if (!s) continue;
     parts.push(`${o.id}:${s.key}`);
     labels.push(objects.length > 1 ? `${shortLabel(o)} → ${s.label}` : s.label);
@@ -183,12 +187,17 @@ export function* sweepSteps(cfg) {
   const sigAt = (t) => {
     setParam(t);
     done++;
-    return combinedSignature(objects, bounds, compute);
+    return combinedSignature(objects, bounds, compute, SWEEP_OPTS, cfg.exactKind);
   };
 
   // 표본 수는 고정한다. 시간에 맞춰 줄이면 실행할 때마다 결과가 달라지고,
   // 특히 "정확히 원이 되는 a = 1" 처럼 얇은 띠를 통째로 건너뛰게 된다.
-  const samples = cfg.samples ?? 41;
+  // 기호적으로 미리 구한 분기점 후보 (이차곡선 등)가 있으면 표본을 줄여도 된다.
+  // 정확한 자리를 이미 알고 있으므로 훑기는 "빠뜨린 게 없는지" 확인하는 역할만 한다.
+  const exactAt = (cfg.exactAt || [])
+    .filter((e) => e.at > min && e.at < max)
+    .sort((a, b) => a.at - b.at);
+  const samples = cfg.samples ?? (exactAt.length ? 21 : 41);
   // 이분법은 14번이면 훑는 범위의 1/16000 까지 좁힌다. 어차피 마지막에
   // 깔끔한 수로 맞추므로(범위의 0.1%) 그보다 더 좁힐 실익이 없다.
   const bisect = cfg.bisect ?? 14;
@@ -198,7 +207,7 @@ export function* sweepSteps(cfg) {
   // 1) 성기게 훑는다
   const pts = [{ t: min, sig: probeSig }];
   for (let i = 1; i < samples; i++) {
-    const t = min + (span * i) / (samples - 1);
+    const t = cleanNum(min + (span * i) / (samples - 1));
     pts.push({ t, sig: sigAt(t) });
     yield Math.min(0.9, done / total);
   }
@@ -230,16 +239,53 @@ export function* sweepSteps(cfg) {
     raw.push({ at, before: loSig, after: hiSig, isolated, snapped: snapped.snapped });
   }
 
+  // 2.5) 기호로 구한 분기점을 합친다. 같은 자리를 찾았으면 정확한 값으로 갈아 끼운다.
+  for (const e of exactAt) {
+    const hit = raw.find((t) => Math.abs(t.at - e.at) < span * 0.05);
+    if (hit) {
+      hit.at = e.at;
+      hit.exactText = e.text;
+      hit.reason = e.reason;
+      hit.snapped = true;
+      continue;
+    }
+    // 훑기가 놓친 자리 — 양옆을 재어 정말 달라지는지 확인한다
+    const eps = span * 1e-4;
+    const lo = sigAt(Math.max(min, e.at - eps));
+    const hi2 = sigAt(Math.min(max, e.at + eps));
+    const on = sigAt(e.at);
+    if (!lo || !hi2) continue;
+    if (lo.key !== hi2.key) {
+      raw.push({
+        at: e.at, before: lo, after: hi2, snapped: true,
+        exactText: e.text, reason: e.reason,
+        isolated: on && on.key !== lo.key && on.key !== hi2.key ? on : null,
+      });
+    } else if (on && on.key !== lo.key) {
+      // 앞뒤는 같지만 그 값에서만 달라지는 순간 (정확히 원이 되는 자리 등)
+      raw.push({
+        at: e.at, before: lo, after: hi2, snapped: true, momentOnly: true,
+        exactText: e.text, reason: e.reason, isolated: on,
+      });
+    }
+  }
+  raw.sort((a, b) => a.at - b.at);
+
   // 3) 구간별로 묶는다
   let stages = [];
   let start = min;
   let sig = pts[0].sig;
   for (const tr of raw) {
+    if (tr.momentOnly) continue;
     stages.push({ from: start, to: tr.at, sig: tr.before || sig });
     start = tr.at;
     sig = tr.after;
   }
   stages.push({ from: start, to: max, sig });
+
+  // 기호로 찾은 "그 순간"만 있는 자리는 따로 모아 둔다
+  const symbolMoments = raw.filter((t) => t.momentOnly && t.isolated)
+    .map((t) => ({ at: t.at, sig: t.isolated, snapped: true, text: t.exactText, reason: t.reason }));
 
   // 4) 아주 좁은 구간은 "그 순간에만 나타나는 모습"으로 접는다.
   //    타원이 원이 되는 a = 1, 쌍곡선이 두 직선으로 무너지는 a = 0 처럼
@@ -258,12 +304,7 @@ export function* sweepSteps(cfg) {
     kept.push({ ...st });
   }
   // 같은 분류가 이어지면 하나로 합친다 (사이에 끼어 있던 "순간"은 위에서 따로 뽑았다)
-  stages = [];
-  for (const st of kept) {
-    const prev = stages[stages.length - 1];
-    if (prev && prev.sig && st.sig && prev.sig.key === st.sig.key) prev.to = st.to;
-    else stages.push(st);
-  }
+  stages = mergeSame(kept);
 
   // 4.5) 구간의 대표 분류는 안쪽 여러 곳에서 재어 가장 많이 나온 것으로 정한다.
   //      경계 바로 옆은 두 모습이 섞이는 자리고, 한가운데는 하필 특이값일 수 있다
@@ -272,7 +313,7 @@ export function* sweepSteps(cfg) {
     const tally = new Map();
     const probes = overBudget() ? [0.5] : [0.25, 0.5, 0.75];
     for (const f of probes) {
-      const sg = sigAt(st.from + (st.to - st.from) * f);
+      const sg = sigAt(cleanNum(st.from + (st.to - st.from) * f));
       if (!sg) continue;
       const e = tally.get(sg.key) || { n: 0, sig: sg };
       e.n++;
@@ -283,6 +324,9 @@ export function* sweepSteps(cfg) {
     if (best) st.sig = best.sig;
     yield Math.min(0.98, done / total);
   }
+  // 대표 분류를 다시 재고 나면 이웃한 두 구간이 같은 분류가 되기도 한다.
+  // (경계인 줄 알았던 자리가 실은 서명이 잠깐 흔들린 것이었던 경우)
+  stages = mergeSame(stages);
 
   // 5) 남은 경계를 분기점으로 정리한다
   const transitions = [];
@@ -294,18 +338,26 @@ export function* sweepSteps(cfg) {
     const near = raw.find((t) => Math.abs(t.at - b.from) < span * 1e-6);
     const snap = ev ? { v: ev.at, snapped: ev.snapped }
       : (near ? { v: near.at, snapped: near.snapped } : snapNiceInfo(b.from, b.from, span));
+    const exactHit = raw.find((t) => t.exactText && Math.abs(t.at - b.from) < span * 1e-6);
+    // "이 값에서만" 은 양옆과 정말 다를 때만 알린다.
+    // 구간의 대표 분류를 다시 재고 나면 같은 것이 되기도 한다.
+    let only = ev ? ev.sig : (near ? near.isolated : null);
+    if (only && (only.key === a.sig.key || only.key === b.sig.key)) only = null;
     transitions.push({
-      at: snap.v, before: a.sig, after: b.sig,
-      isolated: ev ? ev.sig : (near ? near.isolated : null),
+      at: exactHit ? exactHit.at : snap.v,
+      before: a.sig, after: b.sig,
+      isolated: only,
       raw: b.from,
-      atText: pretty(snap.v),
+      atText: exactHit ? exactHit.exactText : pretty(snap.v),
+      reason: exactHit ? exactHit.reason : undefined,
       // 깔끔한 수로 맞추지 못했으면 이분법이 짚은 자리 그대로라 오차가 남아 있다
-      approx: !snap.snapped,
+      approx: exactHit ? false : !snap.snapped,
     });
   }
   // 앞뒤 분류가 같아 분기점으로는 잡히지 않지만, 그 순간에만 나타나는 모습도 알린다
-  const soloEvents = events.filter((e) => !transitions.some((t) => Math.abs(t.at - e.at) <= narrow));
-  for (const e of soloEvents) e.atText = pretty(e.at);
+  const soloEvents = [...events, ...symbolMoments]
+    .filter((e) => !transitions.some((t) => Math.abs(t.at - e.at) <= narrow));
+  for (const e of soloEvents) e.atText = e.text || pretty(e.at);
 
   for (const st of stages) {
     st.fromText = pretty(snapNice(st.from, st.from, span));
@@ -319,6 +371,17 @@ export function* sweepSteps(cfg) {
     truncated: overBudget(),
     resolution: span / (samples - 1),
   };
+}
+
+/** 이어진 구간 중 분류가 같은 것을 하나로 합친다 */
+function mergeSame(list) {
+  const out = [];
+  for (const st of list) {
+    const prev = out[out.length - 1];
+    if (prev && prev.sig && st.sig && prev.sig.key === st.sig.key) prev.to = st.to;
+    else out.push({ ...st });
+  }
+  return out;
 }
 
 /** 한 번에 끝까지 돌리는 동기 버전 */
@@ -357,6 +420,20 @@ function snapNiceInfo(lo, hi, span = 0) {
   }
   const mid = (lo + hi) / 2;
   return { v: mid === 0 ? 0 : mid, snapped: false };
+}
+
+/**
+ * 표본 자리를 깔끔한 소수로 다듬는다.
+ *
+ * min + span·i/(n−1) 은 −1.3999999999999999 같은 값을 낸다. 눈으로는 −1.4 지만
+ * 유리수가 아니라서 기호 계산 층이 손을 놓아 버리고, 그러면 같은 구간 안에서도
+ * 표본마다 서명의 모양이 달라져 없는 경계가 생긴다. 유효숫자 12자리로 맞춰
+ * −1.4 로 되돌려 놓으면 정확히 −7/5 로 읽힌다.
+ */
+function cleanNum(t) {
+  if (!isFinite(t) || t === 0) return t;
+  const r = Number(t.toPrecision(12));
+  return Math.abs(r - t) <= Math.abs(t) * 1e-11 ? r : t;
 }
 
 function snapNice(lo, hi, span = 0) {

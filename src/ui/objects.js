@@ -12,6 +12,9 @@ import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
 import { fitConic } from '../analysis/conic.js';
+import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions } from '../analysis/exact.js';
+import { toPoly } from '../math/poly.js';
+import { ratFromNumber } from '../math/rational.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const ANGLE_VARS = new Set(['t', 'θ', 'theta']);
@@ -314,6 +317,7 @@ function classify(obj, asts, ctx) {
     if (main.a.type === 'var' && main.a.name === 'x' && !freeVars(main.b).has('x')) {
       obj.kind = 'functionY';
       obj.varName = 'y';
+      obj.expr = main.b;
       obj.fn = compile(main.b, ctx);
       obj.label = `x = ${format(main.b)}`;
       return obj;
@@ -328,6 +332,7 @@ function classify(obj, asts, ctx) {
       }
       obj.kind = 'implicit';
       obj.f = residual(main, ctx);
+      obj.exprAst = main;
       obj.label = format(main);
       return obj;
     }
@@ -337,6 +342,7 @@ function classify(obj, asts, ctx) {
       obj.kind = 'equation1d';
       obj.varName = v;
       obj.f = residual(main, ctx);
+      obj.exprAst = main;
       obj.label = format(main);
       return obj;
     }
@@ -367,8 +373,10 @@ function classify(obj, asts, ctx) {
     return obj;
   }
   if (free.has('x') && free.has('y')) {
+    const eq = { type: 'cmp', op: '=', a: main, b: { type: 'num', value: 0 } };
     obj.kind = 'implicit';
-    obj.f = residual({ type: 'cmp', op: '=', a: main, b: { type: 'num', value: 0 } }, ctx);
+    obj.f = residual(eq, ctx);
+    obj.exprAst = eq;
     obj.label = `${format(main)} = 0`;
     return obj;
   }
@@ -462,6 +470,57 @@ function referencesEarlier(node, name, idxVar) {
     for (const k of ['args', 'items']) if (n[k]) n[k].forEach(walk);
   })(node);
   return found;
+}
+
+/** 값이 정해진 이름들을 정확한 유리수로 (기호 계산에 넘기기 위해) */
+export function exactConstants(ctx) {
+  const out = new Map();
+  for (const [name, def] of ctx.defs) {
+    if (def.params.length !== 0 || !def.body) continue;
+    if (def.body.type !== 'num' || def.body.sym) continue;
+    const r = ratFromNumber(def.body.value);
+    if (r) out.set(name, r);
+  }
+  return out;
+}
+
+/** 식을 x·y 에 대한 다항식으로 (슬라이더 값은 유리수로 대입). 아니면 null */
+export function polyOf(obj, ctx, vars = ['x', 'y']) {
+  if (!obj || !obj.exprAst) return null;
+  return toPoly(obj.exprAst, vars, exactConstants(ctx));
+}
+
+/**
+ * 파라미터 훑기에 넘길 기호 계산 고리.
+ *   exactAt   — 분류가 갈리는 파라미터 값을 방정식을 풀어 미리 구해 둔 것
+ *   exactKind — 파라미터 값마다 이차곡선의 종류를 식에서 바로 판정하는 함수
+ * 훑기가 표본으로 짐작하던 자리를 정확한 값으로 바꿔 준다.
+ */
+export function sweepHooks(objects, ctx, param) {
+  const consts = exactConstants(ctx);
+  consts.delete(param);            // 훑는 파라미터는 값이 아니라 문자로 남겨 둔다
+  const exactAt = [];
+  for (const o of objects) {
+    if ((o.kind === 'function' || o.kind === 'functionY') && o.expr) {
+      // y = f(x) 꼴 — 실근·극값 개수가 바뀌는 자리를 종결식으로
+      const v = o.varName || 'x';
+      const fp = toPoly(o.expr, [v, param], consts);
+      const list = fp ? familyTransitions(fp, param, v) : null;
+      if (list) exactAt.push(...list);
+      continue;
+    }
+    if (!o.exprAst) continue;
+    const poly = toPoly(o.exprAst, ['x', 'y', param], consts);
+    const list = poly ? conicTransitions(poly, param) : null;
+    if (list) exactAt.push(...list);
+  }
+  const exactKind = (obj) => {
+    const poly = polyOf(obj, ctx);
+    if (!poly || poly.degree > 2) return null;
+    const c = classifyConicExact(poly);
+    return c ? c.kind : null;
+  };
+  return { exactAt, exactKind };
 }
 
 /** 이 식이 주어진 이름(슬라이더 등)에 기대고 있는가 */
@@ -922,7 +981,7 @@ export function analyzeObject(obj, bounds, ctx) {
         const r = analyzeFunction((y) => obj.fn({ y }), { xmin: bounds.ymin, xmax: bounds.ymax, name: 'x' });
         return { title: '함수 분석 (y 에 대한 함수)', ...r };
       }
-      case 'implicit': return analyzeImplicit(obj, bounds);
+      case 'implicit': return analyzeImplicit(obj, bounds, ctx);
       case 'system': {
         const d = computeObject(obj, bounds);
         const r = analyzePointSet(d.points);
@@ -946,9 +1005,24 @@ export function analyzeObject(obj, bounds, ctx) {
         const vals = d.points.map((p) => (obj.varName === 'y' ? p[1] : p[0]));
         const seq = analyzeSequence(vals, { name: obj.varName });
         const ps = analyzePointSet(d.points);
+        const findings = [...seq.findings, ...ps.findings.filter((f) => f.type !== 'grid-x')];
+
+        // 다항방정식이면 근을 근호 그대로 정확히 적는다
+        const uni = polyOf(obj, ctx, [obj.varName]);
+        const exactRoots = uni ? polyRootsExact(uni.toUnivariate(obj.varName) || []) : null;
+        if (Array.isArray(exactRoots)) {
+          findings.unshift({
+            type: 'exact-roots', confidence: 1,
+            title: exactRoots.length ? `정확한 해 ${exactRoots.length}개` : '실수해 없음',
+            detail: exactRoots.length
+              ? exactRoots.map((r) => `${obj.varName} = ${r.text}`).join(',   ')
+              : '이 다항방정식에는 실수해가 없습니다.',
+            hint: '표본에서 찾은 값이 아니라 계수를 유리수로 놓고 정확히 푼 결과입니다.',
+          });
+        }
         return { title: `방정식의 해 (${obj.varName} 에 대한 점열)`,
           lead: `이 화면 범위에서 해가 ${vals.length}개 있습니다: ${vals.slice(0, 10).map((v) => pretty(v)).join(', ')}`,
-          findings: [...seq.findings, ...ps.findings.filter((f) => f.type !== 'grid-x')],
+          findings,
           summary: seq.summary };
       }
       case 'points':
@@ -1096,13 +1170,42 @@ function analyzeRegion(obj, bounds) {
   return { title: '부등식 영역 분석', findings, summary: findings[0].title };
 }
 
-function analyzeImplicit(obj, bounds) {
+function analyzeImplicit(obj, bounds, ctx) {
   const d = computeObject(obj, bounds);
   const findings = [];
   const nPts = d.points.length;
   const nCurves = d.polylines.length;
 
-  if (nCurves) {
+  // 식이 다항식이면 표본에 기대지 않고 기호적으로 정확히 판정한다
+  const poly = ctx ? polyOf(obj, ctx) : null;
+  const exact = poly && poly.degree <= 2 ? classifyConicExact(poly) : null;
+  if (exact) {
+    let detail = `계수를 정확히 따져 보면 ${exact.kind} 입니다.`;
+    if (exact.radiusSq) {
+      const r2 = exact.radiusSq;
+      detail += ` 반지름² = ${r2.toString()}`;
+      const rv = Math.sqrt(r2.value);
+      detail += ` (반지름 ${pretty(rv)})`;
+    }
+    if (exact.center) {
+      detail += ` 중심 (${exact.center[0].toString()}, ${exact.center[1].toString()}).`;
+    }
+    detail += `  판별식 B²−4AC = ${exact.disc.toString()}`
+      + `, 행렬식 = ${exact.det.toString()}`;
+    findings.push({
+      type: 'conic-exact', title: `이차곡선: ${exact.kind}`, confidence: 1,
+      detail, formula: conicEquation(poly),
+      hint: '표본을 맞춰 본 것이 아니라 계수를 유리수로 정확히 계산한 결과입니다.',
+    });
+  } else if (poly && poly.degree > 2) {
+    findings.push({
+      type: 'poly', title: `${poly.degree}차 대수곡선`, confidence: 1,
+      detail: `x, y 에 대한 ${poly.degree}차 다항식입니다.`,
+      formula: `${poly.toString()} = 0`,
+    });
+  }
+
+  if (nCurves && !exact) {
     // 곡선 위의 표본으로 이차곡선 판별
     const sample = [];
     for (const line of d.polylines) {

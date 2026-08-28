@@ -2,7 +2,7 @@
 
 import { View } from './view.js';
 import { Renderer, PALETTE, SWATCHES, DASHES, defaultStyle } from './renderer.js';
-import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf, dependsOn } from './objects.js';
+import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf, dependsOn, sweepHooks } from './objects.js';
 import { sweepSteps } from '../analysis/sweep.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { renderMath } from './mathhtml.js';
@@ -667,6 +667,10 @@ class App {
       def.body = { type: 'num', value: t };
       def.compiled = null;
     };
+    // 식이 다항식이면 분기점을 기호적으로 미리 구해 둔다.
+    // 훑어서 찾는 것보다 정확하고, 왜 그 자리인지(판별식이 0 등)까지 말할 수 있다.
+    const { exactAt, exactKind } = sweepHooks(deps, this.ctx, o.defName);
+
     const it = sweepSteps({
       objects: deps,
       setParam,
@@ -675,6 +679,8 @@ class App {
       bounds: this.view.bounds(),
       compute: (obj, b, opts) => computeObject(obj, b, opts),
       restore: original,
+      exactAt,
+      exactKind,
     });
 
     let res = null;
@@ -717,7 +723,8 @@ class App {
         type: 'transition', confidence: 1,
         title: `분기점  ${o.defName} = ${t.atText}${t.approx ? ' (근사)' : ''}`,
         detail: `${t.before.label}  →  ${t.after.label}`
-          + (t.isolated ? `\n이 값에서만: ${t.isolated.label}` : ''),
+          + (t.isolated ? `\n이 값에서만: ${t.isolated.label}` : '')
+          + (t.reason ? `\n근거: ${t.reason}` : ''),
         jump: t.at,
       });
     }
@@ -725,7 +732,8 @@ class App {
       findings.push({
         type: 'moment', confidence: 1,
         title: `특이한 순간  ${o.defName} = ${e.atText}`,
-        detail: `이 값에서만 ${e.sig.label} 가 됩니다.`,
+        detail: `이 값에서만 ${e.sig.label} 가 됩니다.`
+          + (e.reason ? `\n근거: ${e.reason}` : ''),
         jump: e.at,
       });
     }

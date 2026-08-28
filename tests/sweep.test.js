@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createContext, createObject, computeObject, dependsOn } from '../src/ui/objects.js';
+import { createContext, createObject, computeObject, dependsOn, sweepHooks } from '../src/ui/objects.js';
 import { sweepParameter, sweepSteps, objectSignature } from '../src/analysis/sweep.js';
 
 const B = { xmin: -6.5, xmax: 6.5, ymin: -5, ymax: 5, width: 900, height: 700 };
@@ -26,13 +26,14 @@ const run = (lines, param, min, max) => {
   const s = setup(lines, param);
   return sweepParameter({
     objects: s.targets, setParam: s.setParam, min, max, bounds: B, compute: computeObject,
+    ...sweepHooks(s.targets, s.ctx, param),
   });
 };
 const labels = (r) => r.stages.map((st) => st.sig.label);
 
 test('이차곡선의 종류가 갈리는 지점', () => {
   const r = run(['a = 1', 'x^2 + a y^2 = 1'], 'a', -2, 2);
-  assert.deepEqual(labels(r), ['쌍곡선 · 가지 2개', '타원 · 가지 1개']);
+  assert.deepEqual(labels(r), ['쌍곡선', '타원']);
   assert.equal(r.transitions.length, 1);
   assert.equal(r.transitions[0].at, 0);
   assert.match(r.transitions[0].isolated.label, /두 평행선|두 직선/);
@@ -51,7 +52,7 @@ test('실근 개수가 바뀌는 지점', () => {
 
 test('해가 생겨나는 지점 — 빈 집합 → 한 점 → 원', () => {
   const r = run(['a = 1', 'x^2 + y^2 = a'], 'a', -1, 3);
-  assert.deepEqual(labels(r), ['해 없음', '원 · 가지 1개']);
+  assert.deepEqual(labels(r), ['해 없음', '원']);
   assert.equal(r.transitions[0].at, 0);
   assert.match(r.transitions[0].isolated.label, /고립해 1개/);   // a = 0 에서는 원점 한 점
 });
