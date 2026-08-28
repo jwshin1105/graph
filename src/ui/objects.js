@@ -195,6 +195,13 @@ function classify(obj, asts, ctx) {
       obj.kind = 'point';
       obj.points = [[x, y]];
       obj.label = `(${pretty(x)}, ${pretty(y)})`;
+      // 좌표가 이름(슬라이더 상수)이면 점을 끌어 그 값을 바꿀 수 있다
+      obj.dragVars = main.items.map((it) => {
+        if (it.type !== 'var') return null;
+        const d = ctx.defs.get(it.name);
+        return d && d.params.length === 0 ? it.name : null;
+      });
+      if (!obj.dragVars.some(Boolean)) obj.dragVars = null;
       return obj;
     }
     const p = [...free][0];

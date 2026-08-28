@@ -1,9 +1,11 @@
 // 앱 컨트롤러: 입력 목록 · 캔버스 · 분석 패널을 잇는다.
 
 import { View } from './view.js';
-import { Renderer, PALETTE } from './renderer.js';
+import { Renderer, PALETTE, SWATCHES, DASHES, defaultStyle } from './renderer.js';
 import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf } from './objects.js';
 import { analyzePointSet } from '../analysis/pointset.js';
+import { renderMath } from './mathhtml.js';
+import { setAngleMode, getAngleMode } from '../math/functions.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const EXAMPLES = [
@@ -74,9 +76,11 @@ class App {
   }
 
   // ── 상태 ────────────────────────────────
-  addObject(source = '') {
+  addObject(source = '', style = null) {
     const obj = createObject(source, this.ctx, this.nextId++, this.colorSeq);
     obj.color = PALETTE[this.colorSeq % PALETTE.length];
+    obj.style = style ? { ...defaultStyle(obj.color), ...style } : defaultStyle(obj.color);
+    obj.color = obj.style.color;
     this.colorSeq++;
     this.objects.push(obj);
     this.needsCompute = true;
@@ -89,6 +93,7 @@ class App {
     if (obj.name) this.ctx.seqs.delete(obj.name);
     const next = createObject(source, this.ctx, obj.id, obj.colorIndex);
     next.color = obj.color;
+    next.style = obj.style;
     next.visible = obj.visible;
     this.objects[idx] = next;
     if (this.selected === obj) this.selected = next;
@@ -113,11 +118,13 @@ class App {
     try {
       const state = {
         v: 1,
-        o: this.objects.filter((o) => o.source.trim()).map((o) => [o.source, o.visible ? 1 : 0]),
+        o: this.objects.filter((o) => o.source.trim())
+          .map((o) => [o.source, o.visible ? 1 : 0, packStyle(o.style)]),
         c: [+this.view.cx.toFixed(10), +this.view.cy.toFixed(10),
             +this.view.scaleX.toFixed(6), +this.view.scaleY.toFixed(6)],
         t: this.theme,
         i: this.showIntersections ? 1 : 0,
+        g: getAngleMode(),
       };
       const enc = btoa(unescape(encodeURIComponent(JSON.stringify(state))))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -127,6 +134,13 @@ class App {
   }
 
   restore() {
+    const applyAngle = (m) => {
+      if (m && m !== getAngleMode()) {
+        setAngleMode(m);
+        const btn = document.querySelector('[data-act="angle"]');
+        if (btn) { btn.textContent = m === 'deg' ? '°' : 'π'; }
+      }
+    };
     const src = location.hash.slice(1) || (() => {
       try { return localStorage.getItem('graph-state') || ''; } catch { return ''; }
     })();
@@ -135,8 +149,9 @@ class App {
       const json = decodeURIComponent(escape(atob(src.replace(/-/g, '+').replace(/_/g, '/'))));
       const st = JSON.parse(json);
       if (!st || !Array.isArray(st.o)) return false;
-      for (const [text, vis] of st.o) {
-        const o = this.addObject(text);
+      applyAngle(st.g);
+      for (const [text, vis, sty] of st.o) {
+        const o = this.addObject(text, unpackStyle(sty));
         o.visible = vis !== 0;
       }
       if (Array.isArray(st.c)) {
@@ -239,24 +254,27 @@ class App {
     for (const o of this.objects) {
       if (!o.visible || !o.data) continue;
       const d = o.data;
-      if (d.mask) r.drawMask(d.mask, o.color, b);
+      const st = o.style || defaultStyle(o.color);
+      if (d.mask) r.drawMask(d.mask, st.color, b);
       if (d.polylines && d.polylines.length) {
-        r.drawPolylines(d.polylines, o.color, d.ghost ? 1.2 : 2.1, d.dash || (d.ghost ? [4, 4] : null));
+        const dash = d.dash || (d.ghost ? [4, 4] : DASHES[st.dash] || null);
+        r.drawPolylines(d.polylines, st.color, d.ghost ? 1.2 : st.width, dash, st.opacity);
       }
       if (d.stems && d.points) {
         // 화면 밖으로 치솟는 항의 막대는 그리지 않는다 (세로줄만 남아 지저분해진다)
         const stems = d.points
           .filter(([, y]) => y >= b.ymin && y <= b.ymax)
           .map(([x, y]) => [x, 0, x, y]);
-        r.drawPolylines(stems, o.color, 1, [2, 3]);
+        r.drawPolylines(stems, st.color, 1, [2, 3], st.opacity * 0.8);
       }
       if (d.points && d.points.length) {
         const many = d.points.length > 400;
-        r.drawPoints(d.points, o.color, many ? 2.4 : 4.6);
+        r.drawPoints(d.points, st.color, many ? 2.4 : st.pointSize,
+          { style: st.pointStyle, opacity: st.opacity });
         if (!many && d.points.length <= 10 && o.kind !== 'sequence') {
           r.drawLabels(
             d.points.map(([x, y]) => ({ x, y, text: `(${pretty(x)}, ${pretty(y)})` })),
-            o.color,
+            st.color,
           );
         }
       }
@@ -329,10 +347,14 @@ class App {
 
       const sw = document.createElement('button');
       sw.className = 'swatch';
-      sw.style.background = o.color;
-      sw.title = '보이기/숨기기';
-      sw.onclick = () => { o.visible = !o.visible; sw.style.opacity = o.visible ? 1 : .25; this.schedule(); };
+      sw.style.background = (o.style || {}).color || o.color;
+      sw.title = '색·굵기·선 모양 바꾸기';
       sw.style.opacity = o.visible ? 1 : .25;
+      sw.onclick = () => {
+        const open = row.querySelector('.style-panel');
+        if (open) { open.remove(); return; }
+        row.append(this.buildStylePanel(o, sw));
+      };
 
       const input = document.createElement('input');
       input.className = 'expr';
@@ -361,6 +383,17 @@ class App {
 
       const acts = document.createElement('div');
       acts.className = 'acts';
+      const eye = document.createElement('button');
+      eye.className = 'iconbtn';
+      eye.textContent = o.visible ? '●' : '○';
+      eye.title = '보이기/숨기기';
+      eye.onclick = () => {
+        o.visible = !o.visible;
+        eye.textContent = o.visible ? '●' : '○';
+        sw.style.opacity = o.visible ? 1 : .25;
+        this.schedule();
+        this.scheduleSave();
+      };
       const an = document.createElement('button');
       an.className = 'iconbtn' + (this.selected === o ? ' on' : '');
       an.textContent = '분석';
@@ -370,7 +403,7 @@ class App {
       del.textContent = '✕';
       del.title = '삭제';
       del.onclick = () => this.removeObject(o);
-      acts.append(an, del);
+      acts.append(eye, an, del);
 
       head.append(sw, input, acts);
       row.append(head);
@@ -412,23 +445,116 @@ class App {
         if (o.kind === 'value' || o.kind === 'constant') {
           meta.innerHTML += `<span class="tag pt">${escapeHtml(o.label)}</span>`;
         }
-        if (o.label && o.label !== o.source) {
-          const s = document.createElement('span');
-          s.textContent = o.label;
-          s.style.fontFamily = 'var(--mono)';
-          meta.append(s);
-        }
         row.append(meta);
+        // 입력한 식을 수학처럼 보이게 다시 그려 준다 (분수는 쌓고, 지수는 위로)
+        const ast = o.asts && o.asts[o.asts.length - 1];
+        if (ast && !['constant', 'list', 'value'].includes(o.kind)) {
+          const m = document.createElement('div');
+          m.className = 'item-math';
+          m.innerHTML = renderMath(ast);
+          row.append(m);
+        } else if (o.label && o.label !== o.source) {
+          const s2 = document.createElement('div');
+          s2.className = 'item-math';
+          s2.style.fontFamily = 'var(--mono)';
+          s2.style.fontSize = '11.5px';
+          s2.style.color = 'var(--muted)';
+          s2.textContent = o.label;
+          row.append(s2);
+        }
         if (o.slider) row.append(this.buildSlider(o));
       }
       host.append(row);
     }
   }
 
+  /** 색·굵기·선 모양·점 모양을 고르는 패널 */
+  buildStylePanel(o, swatchEl) {
+    const st = o.style || (o.style = defaultStyle(o.color));
+    const panel = document.createElement('div');
+    panel.className = 'style-panel';
+
+    const colors = document.createElement('div');
+    colors.className = 'sw-grid';
+    for (const c of SWATCHES) {
+      const b = document.createElement('button');
+      b.className = 'sw-dot' + (c === st.color ? ' on' : '');
+      b.style.background = c;
+      b.onclick = () => {
+        st.color = c;
+        o.color = c;
+        swatchEl.style.background = c;
+        colors.querySelectorAll('.sw-dot').forEach((n) => n.classList.remove('on'));
+        b.classList.add('on');
+        this.schedule();
+        this.scheduleSave();
+      };
+      colors.append(b);
+    }
+    panel.append(colors);
+
+    const rowOf = (label, node) => {
+      const r = document.createElement('div');
+      r.className = 'style-row';
+      const l = document.createElement('span');
+      l.textContent = label;
+      r.append(l, node);
+      return r;
+    };
+    const slider = (min, max, step, value, apply) => {
+      const i = document.createElement('input');
+      i.type = 'range';
+      i.min = min; i.max = max; i.step = step; i.value = value;
+      i.oninput = () => { apply(parseFloat(i.value)); this.schedule(); };
+      i.onchange = () => this.scheduleSave();
+      return i;
+    };
+    const chips = (options, current, apply) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'chips';
+      for (const [key, label] of options) {
+        const b = document.createElement('button');
+        b.className = 'chip' + (key === current ? ' on' : '');
+        b.textContent = label;
+        b.onclick = () => {
+          apply(key);
+          wrap.querySelectorAll('.chip').forEach((n) => n.classList.remove('on'));
+          b.classList.add('on');
+          this.schedule();
+          this.scheduleSave();
+        };
+        wrap.append(b);
+      }
+      return wrap;
+    };
+
+    panel.append(rowOf('굵기', slider(0.5, 6, 0.1, st.width, (v) => { st.width = v; })));
+    panel.append(rowOf('진하기', slider(0.15, 1, 0.05, st.opacity, (v) => { st.opacity = v; })));
+    panel.append(rowOf('선', chips(
+      [['solid', '실선'], ['dashed', '파선'], ['dotted', '점선'], ['loose', '긴 파선']],
+      st.dash, (v) => { st.dash = v; },
+    )));
+    panel.append(rowOf('점', chips(
+      [['filled', '채움'], ['open', '테두리'], ['square', '네모'], ['cross', '×']],
+      st.pointStyle, (v) => { st.pointStyle = v; },
+    )));
+    panel.append(rowOf('점 크기', slider(2, 12, 0.5, st.pointSize, (v) => { st.pointSize = v; })));
+    return panel;
+  }
+
   /** 상수 정의에 붙는 슬라이더 — 값을 끌면 그 값을 쓰는 식이 함께 움직인다 */
   buildSlider(o) {
     const wrap = document.createElement('div');
     wrap.className = 'slider-row';
+    const play = document.createElement('button');
+    play.className = 'iconbtn play';
+    play.textContent = o.slider.playing ? '⏸' : '▶';
+    play.title = '값을 자동으로 훑기';
+    const mode = document.createElement('button');
+    mode.className = 'iconbtn play';
+    mode.textContent = o.slider.mode === 'oscillate' ? '↔' : '↻';
+    mode.title = o.slider.mode === 'oscillate' ? '끝에서 되돌아옴' : '끝에서 처음으로';
+
     const input = document.createElement('input');
     input.type = 'range';
     input.min = o.slider.min;
@@ -438,6 +564,10 @@ class App {
     const out = document.createElement('span');
     out.className = 'slider-val';
     out.textContent = `${o.defName} = ${trimNum(o.value, 4)}`;
+    o.slider.render = (v) => {
+      input.value = v;
+      out.textContent = `${o.defName} = ${trimNum(v, 4)}`;
+    };
 
     const apply = (v) => {
       o.value = v;
@@ -460,8 +590,53 @@ class App {
       this.schedule();
       this.scheduleSave();
     };
-    wrap.append(input, out);
+    play.onclick = () => {
+      o.slider.playing = !o.slider.playing;
+      play.textContent = o.slider.playing ? '⏸' : '▶';
+      if (o.slider.playing) this.startAnimation();
+    };
+    mode.onclick = () => {
+      o.slider.mode = o.slider.mode === 'oscillate' ? 'loop' : 'oscillate';
+      mode.textContent = o.slider.mode === 'oscillate' ? '↔' : '↻';
+      mode.title = o.slider.mode === 'oscillate' ? '끝에서 되돌아옴' : '끝에서 처음으로';
+    };
+    o.slider.apply = apply;
+    wrap.append(play, mode, input, out);
     return wrap;
+  }
+
+  /** 재생 중인 슬라이더를 시간에 따라 움직인다 */
+  startAnimation() {
+    if (this.animRaf) return;
+    let last = performance.now();
+    const step = (now) => {
+      const playing = this.objects.filter((o) => o.slider && o.slider.playing && o.slider.apply);
+      if (!playing.length) { this.animRaf = null; return; }
+      const dt = Math.min(0.1, (now - last) / 1000);
+      // 계산이 무거우면 프레임을 건너뛰어 손놀림이 끊기지 않게 한다
+      const budget = Math.max(16, (this.lastCost || 0) * 1.3);
+      if (now - last >= budget) {
+        last = now;
+        for (const o of playing) {
+          const s = o.slider;
+          const span = s.max - s.min;
+          const speed = s.speed ?? span / 6;        // 기본: 6초에 한 바퀴
+          s.dir = s.dir || 1;
+          let v = o.value + speed * dt * s.dir;
+          if (v > s.max) {
+            if (s.mode === 'oscillate') { v = s.max - (v - s.max); s.dir = -1; }
+            else v = s.min + ((v - s.min) % span);
+          } else if (v < s.min) {
+            if (s.mode === 'oscillate') { v = s.min + (s.min - v); s.dir = 1; }
+            else v = s.max - ((s.max - v) % span);
+          }
+          s.apply(v);
+          if (s.render) s.render(v);
+        }
+      }
+      this.animRaf = requestAnimationFrame(step);
+    };
+    this.animRaf = requestAnimationFrame(step);
   }
 
   buildExamples() {
@@ -619,6 +794,9 @@ class App {
       active.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.deferCompute = true;
       if (active.size === 2) { pinch = pinchState(); dragging = false; return; }
+      const rect0 = c.getBoundingClientRect();
+      const grab = this.grabPoint(e.clientX - rect0.left, e.clientY - rect0.top);
+      if (grab) { this.dragPoint = grab; c.setPointerCapture(e.pointerId); return; }
       dragging = true; moved = false;
       lastX = e.clientX; lastY = e.clientY;
       c.setPointerCapture(e.pointerId);
@@ -628,6 +806,11 @@ class App {
       const px = e.clientX - rect.left, py = e.clientY - rect.top;
       if (active.has(e.pointerId)) active.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
+      if (this.dragPoint) {
+        this.movePoint(this.dragPoint, this.view.toMathX(px), this.view.toMathY(py));
+        moved = true;
+        return;
+      }
       if (active.size === 2 && pinch) {
         const now = pinchState();
         if (pinch.dist > 0 && now.dist > 0) {
@@ -648,10 +831,15 @@ class App {
         this.schedule();
         return;
       }
+      c.style.cursor = this.grabPoint(px, py) ? 'grab' : 'crosshair';
       this.hover = this.probe(px, py);
       this.schedule();
     });
     const end = (e) => {
+      if (this.dragPoint) {
+        this.finishPointDrag();
+        this.dragPoint = null;
+      }
       if (e && active.has(e.pointerId)) active.delete(e.pointerId);
       if (active.size < 2) pinch = null;
       if (active.size > 0) return;
@@ -732,6 +920,22 @@ class App {
       if (act === 'fit') { this.compute(); this.fitToSolutions(); }
       if (act === 'theme') { this.theme = this.theme === 'dark' ? 'light' : 'dark'; this.applyTheme(); this.scheduleSave(); }
       if (act === 'square') { this.view.squareUp(); }
+      if (act === 'angle') {
+        const next = getAngleMode() === 'deg' ? 'rad' : 'deg';
+        setAngleMode(next);
+        e.target.textContent = next === 'deg' ? '°' : 'π';
+        e.target.title = next === 'deg' ? '각도 단위: 도 (눌러서 라디안)' : '각도 단위: 라디안 (눌러서 도)';
+        // 함수 구현이 바뀌었으므로 모든 식을 다시 만든다
+        const snap = this.objects.map((o) => [o.source, o.visible, o.style]);
+        this.objects = [];
+        this.ctx = createContext();
+        for (const [src2, vis, sty] of snap) {
+          const ob = this.addObject(src2, sty);
+          ob.visible = vis;
+        }
+        this.renderInputs();
+        this.toast(next === 'deg' ? '각도 단위를 도(°)로 바꿨습니다' : '각도 단위를 라디안으로 바꿨습니다');
+      }
       if (act === 'cross') {
         this.showIntersections = !this.showIntersections;
         e.target.classList.toggle('on', this.showIntersections);
@@ -783,6 +987,62 @@ class App {
     });
   }
 
+  /** 끌 수 있는 점이 커서 아래 있는지 */
+  grabPoint(px, py) {
+    for (const o of this.objects) {
+      if (!o.visible || !o.dragVars || !o.data || !o.data.points) continue;
+      const p = o.data.points[0];
+      if (!p) continue;
+      const d = Math.hypot(this.view.toPxX(p[0]) - px, this.view.toPxY(p[1]) - py);
+      if (d < 14) return { obj: o, vars: o.dragVars };
+    }
+    return null;
+  }
+
+  movePoint(grab, mx, my) {
+    const set = (name, value) => {
+      const def = this.ctx.defs.get(name);
+      if (!def) return;
+      def.body = { type: 'num', value };
+      def.compiled = null;
+      const owner = this.objects.find((o) => o.defName === name);
+      if (owner) {
+        owner.value = value;
+        owner.label = `${name} = ${pretty(value)}`;
+        if (owner.slider) {
+          owner.slider.min = Math.min(owner.slider.min, value);
+          owner.slider.max = Math.max(owner.slider.max, value);
+          if (owner.slider.render) owner.slider.render(value);
+        }
+      }
+    };
+    if (grab.vars[0]) set(grab.vars[0], mx);
+    if (grab.vars[1]) set(grab.vars[1], my);
+    this.needsCompute = true;
+    this.schedule();
+  }
+
+  /** 점을 놓으면 슬라이더 정의의 원문도 새 값으로 고쳐 둔다 */
+  finishPointDrag() {
+    for (const name of this.dragPoint.vars.filter(Boolean)) {
+      const owner = this.objects.find((o) => o.defName === name);
+      if (!owner) continue;
+      const keep = owner.source.includes(';') ? owner.source.slice(owner.source.indexOf(';')) : '';
+      // 끌어 놓은 좌표를 슬라이더 눈금에 맞춰 반올림한다 (2.625001 → 2.625)
+      const step = owner.slider ? owner.slider.step : 0.001;
+      const snapped = Math.round(owner.value / step) * step;
+      owner.value = snapped;
+      const def = this.ctx.defs.get(name);
+      if (def) { def.body = { type: 'num', value: snapped }; def.compiled = null; }
+      owner.source = `${name} = ${trimNum(snapped, 6)}${keep}`;
+    }
+    this.deferCompute = false;
+    this.needsCompute = true;
+    this.renderInputs();
+    this.schedule();
+    this.scheduleSave();
+  }
+
   /** 마우스 근처의 해를 찾아 좌표를 알려 준다 */
   probe(px, py) {
     const mx = this.view.toMathX(px);
@@ -809,6 +1069,16 @@ class App {
     }
     return { px, py, text: `(${trimNum(mx, 4)}, ${trimNum(my, 4)})` };
   }
+}
+
+/** 스타일을 짧은 배열로 (링크 길이를 아끼려고) */
+function packStyle(s) {
+  if (!s) return null;
+  return [s.color, s.width, s.dash, s.opacity, s.pointSize, s.pointStyle];
+}
+function unpackStyle(a) {
+  if (!Array.isArray(a)) return null;
+  return { color: a[0], width: a[1], dash: a[2], opacity: a[3], pointSize: a[4], pointStyle: a[5] };
 }
 
 /** 화면 영역을 비율만큼 넓힌 계산용 경계 */

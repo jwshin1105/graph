@@ -143,6 +143,34 @@ function sampleVar(l) {
   return l.reduce((a, b) => a + (b - m) ** 2, 0) / (l.length - 1);
 }
 
+// ── 각도 단위 ────────────────────────────────────────────
+// 도(degree) 모드에서는 삼각함수가 도를 받고, 역삼각함수가 도를 돌려준다.
+const RAD_FNS = {};
+for (const k of ['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'asin', 'acos', 'atan', 'atan2']) {
+  RAD_FNS[k] = FUNCTIONS[k].fn;
+}
+const D2R = Math.PI / 180;
+let angleMode = 'rad';
+
+export function getAngleMode() { return angleMode; }
+
+/** 'rad' 또는 'deg'. 바꾼 뒤에는 식을 다시 컴파일해야 한다. */
+export function setAngleMode(mode) {
+  angleMode = mode === 'deg' ? 'deg' : 'rad';
+  const deg = angleMode === 'deg';
+  for (const k of ['sin', 'cos', 'tan', 'cot', 'sec', 'csc']) {
+    FUNCTIONS[k].fn = deg ? (x) => RAD_FNS[k](x * D2R) : RAD_FNS[k];
+  }
+  for (const k of ['asin', 'acos', 'atan']) {
+    FUNCTIONS[k].fn = deg ? (x) => RAD_FNS[k](x) / D2R : RAD_FNS[k];
+  }
+  FUNCTIONS.atan2.fn = deg ? (y, x) => RAD_FNS.atan2(y, x) / D2R : RAD_FNS.atan2;
+  FUNCTIONS.arcsin.fn = FUNCTIONS.asin.fn;
+  FUNCTIONS.arccos.fn = FUNCTIONS.acos.fn;
+  FUNCTIONS.arctan.fn = FUNCTIONS.atan.fn;
+  return angleMode;
+}
+
 export const CONSTANTS = {
   pi: Math.PI,
   'π': Math.PI,

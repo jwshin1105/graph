@@ -7,6 +7,25 @@ export const PALETTE = [
   '#7c3aed', '#0891b2', '#db2777', '#65a30d',
 ];
 
+/** 고를 수 있는 색 (팔레트 + 중간 색조) */
+export const SWATCHES = [
+  '#2563eb', '#0891b2', '#059669', '#65a30d',
+  '#d97706', '#dc2626', '#db2777', '#7c3aed',
+  '#0f172a', '#64748b', '#f59e0b', '#10b981',
+];
+
+export const DASHES = {
+  solid: null,
+  dashed: [8, 5],
+  dotted: [1.5, 4],
+  loose: [14, 7],
+};
+
+/** 객체 하나의 기본 겉모습 */
+export function defaultStyle(color) {
+  return { color, width: 2.1, dash: 'solid', opacity: 1, pointSize: 4.6, pointStyle: 'filled' };
+}
+
 export class Renderer {
   constructor(canvas, view) {
     this.canvas = canvas;
@@ -110,9 +129,10 @@ export class Renderer {
     ctx.fillText('0', Math.min(Math.max(ax - 5, 12), view.width - 4), labelY);
   }
 
-  drawPolylines(lines, color, width = 2, dash = null) {
+  drawPolylines(lines, color, width = 2, dash = null, opacity = 1) {
     const { ctx, view } = this;
     ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.lineJoin = 'round';
@@ -137,17 +157,29 @@ export class Renderer {
   drawPoints(points, color, radius = 4.5, opts = {}) {
     const { ctx, view } = this;
     const c = this.colors();
+    const style = opts.style || (opts.hollow ? 'open' : 'filled');
     ctx.save();
+    if (opts.opacity !== undefined) ctx.globalAlpha = opts.opacity;
     for (const p of points) {
       const px = view.toPxX(p[0]);
       const py = view.toPxY(p[1]);
       if (px < -20 || px > view.width + 20 || py < -20 || py > view.height + 20) continue;
+      if (style === 'cross') {
+        ctx.beginPath();
+        ctx.moveTo(px - radius, py - radius); ctx.lineTo(px + radius, py + radius);
+        ctx.moveTo(px + radius, py - radius); ctx.lineTo(px - radius, py + radius);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+        continue;
+      }
       ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
-      ctx.fillStyle = opts.hollow ? c.bg : color;
+      if (style === 'square') ctx.rect(px - radius, py - radius, radius * 2, radius * 2);
+      else ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fillStyle = style === 'open' ? c.bg : color;
       ctx.fill();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = opts.hollow ? color : c.pointRing;
+      ctx.strokeStyle = style === 'open' ? color : c.pointRing;
       ctx.stroke();
     }
     ctx.restore();
