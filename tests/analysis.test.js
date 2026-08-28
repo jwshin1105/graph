@@ -137,3 +137,73 @@ test('모델 적합은 올바른 함수족을 고른다', () => {
   assert.equal(fitModels(xs, xs.map(Math.sin))[0].name, '삼각(주기)');
   assert.equal(fitModels(xs, xs.map((x) => 2 * Math.log(x) + 1))[0].name, '로그');
 });
+
+// ── 극값을 값으로 가른다 (이계도함수에 기대지 않는다) ────────
+const fa = (f, o = {}) => analyzeFunction(f, { xmin: -6.5, xmax: 6.5, ...o });
+const countOf = (r, t) => {
+  const m = r.findings.find((x) => x.title.startsWith(t));
+  return m ? m.points.length : 0;
+};
+
+test('꼭짓점도 극값으로 잡는다 — 미분할 수 없어도', () => {
+  // f″ ≡ 0 이라 이계도함수로는 −|x| 의 극대를 찾을 수 없다
+  const r = fa((x) => -Math.abs(x), { d2f: () => 0 });
+  assert.equal(countOf(r, '극대'), 1);
+  const m = r.findings.find((x) => x.title.startsWith('극대'));
+  assert.ok(Math.abs(m.points[0][0]) < 1e-6, `극대 위치 ${m.points[0][0]}`);
+});
+
+test('도함수가 0 을 지나지 않고 뛰기만 해도 잡는다', () => {
+  // |sin x| 의 x = 0, ±π, ±2π — 도함수는 −1 에서 +1 로 뛴다
+  const r = fa((x) => Math.abs(Math.sin(x)));
+  assert.equal(countOf(r, '극소'), 5);
+  assert.equal(countOf(r, '극대'), 4);
+});
+
+test('계단함수는 극값이 없다', () => {
+  const r = fa(Math.floor);
+  assert.equal(countOf(r, '극대'), 0);
+  assert.equal(countOf(r, '극소'), 0);
+});
+
+test('계단함수에 사선 점근선을 붙이지 않는다', () => {
+  // floor x − x 는 (−1, 0] 을 맴돌 뿐 0 으로 가지 않는다
+  assert.equal(has(fa(Math.floor), '사선 점근선'), false);
+  // 진짜 사선 점근선은 찾는다
+  assert.equal(has(fa((x) => x + 1 / x), '사선 점근선'), true);
+});
+
+test('값이 커도 극값을 놓치지 않는다', () => {
+  const r = fa((x) => 1e10 - x * x);
+  assert.equal(countOf(r, '극대'), 1);
+});
+
+test('평평한 구간은 극값이 아니다', () => {
+  assert.equal(countOf(fa((x) => Math.max(x, -x, 1)), '극소'), 0);
+});
+
+// ── 정의역 ─────────────────────────────────────────────
+test('반쪽만 정의된 함수는 구멍이 아니라 정의역으로 알린다', () => {
+  const r = fa(Math.sqrt);
+  const d = r.findings.find((x) => x.title === '정의역');
+  assert.ok(d, '정의역을 알리지 않음');
+  assert.match(d.detail, /x ≥ 0/);
+  assert.equal(has(r, '정의역에 구멍'), false);
+});
+
+test('한 점만 빠지면 구멍이라 부른다', () => {
+  const r = fa((x) => 1 / x);
+  assert.equal(has(r, '정의역에 구멍'), true);
+  assert.equal(has(r, '정의역'), true);
+});
+
+test('정의역의 경계는 이분법으로 좁힌다', () => {
+  const r = fa((x) => Math.sqrt(1 - x * x));
+  const d = r.findings.find((x) => x.title === '정의역');
+  assert.match(d.detail, /-1 ≤ x ≤ 1/);
+});
+
+test('구간 전체에서 정의되면 아무 말도 하지 않는다', () => {
+  const r = fa((x) => x * x);
+  assert.equal(has(r, '정의역'), false);
+});

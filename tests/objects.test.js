@@ -158,3 +158,55 @@ test('점 수가 폭주하지 않는다', () => {
     assert.ok(nv(make(src)) < 20000, `${src} → ${nv(make(src))}점`);
   }
 });
+
+// ── 등식 ∧ 부등식 = 제한된 해집합 ───────────────────────
+test('등식에 부등식이 붙으면 영역이 아니라 조건이 걸린 곡선', () => {
+  const o = make('x^2 + y^2 = 4 and x > 0');
+  assert.equal(o.kind, 'implicit');
+  assert.equal(o.restricted, true);
+  assert.ok(o.data.polylines.length >= 1, '반원이 그려지지 않음');
+  // 그려진 점이 모두 조건을 만족해야 한다
+  for (const line of o.data.polylines) {
+    for (let i = 0; i < line.length; i += 2) {
+      assert.ok(line[i] > -0.05, `x = ${line[i]} 는 조건 밖`);
+    }
+  }
+});
+
+test('{ } 제한과 and 부등식은 같은 결과', () => {
+  const a = make('x^2 + y^2 = 4 and x > 0');
+  const b = make('x^2 + y^2 = 4 {x > 0}');
+  const len = (o) => o.data.polylines.reduce((n, l) => n + l.length, 0);
+  assert.equal(a.kind, b.kind);
+  assert.ok(Math.abs(len(a) - len(b)) <= 4, `${len(a)} vs ${len(b)}`);
+});
+
+test('제한이 걸려도 종류는 본래 식에서 정확히 읽는다', () => {
+  const ctx = createContext();
+  const o = make('x^2 + y^2 = 4 and x > 0', ctx);
+  const f = analyzeObject(o, B, ctx).findings.find((x) => x.type === 'conic-exact');
+  assert.ok(f, '이차곡선 판정이 없음');
+  assert.match(f.title, /원의 일부/);       // 해집합이 원 "자체"는 아니다
+});
+
+test('부등식만 있으면 그대로 영역', () => {
+  const o = make('y < x^2 and y > 0');
+  assert.equal(o.kind, 'region');
+  assert.ok(o.data.mask);
+});
+
+test('연립해도 조건으로 거른다', () => {
+  const o = make('x^2 + y^2 = 4 and y = x and x > 0');
+  assert.equal(o.kind, 'system');
+  assert.equal(o.data.points.length, 1);
+  assert.ok(o.data.points[0][0] > 0);
+});
+
+test('표본을 맞춰 본 이차곡선은 "위에 놓인다" 라고만 말한다', () => {
+  const ctx = createContext();
+  const o = make('max(x, y) = 1', ctx);       // ㄱ 자 — 두 직선의 일부일 뿐이다
+  const f = analyzeObject(o, B, ctx).findings.find((x) => x.type === 'conic');
+  assert.ok(f);
+  assert.match(f.detail, /위에 놓입니다/);
+  assert.doesNotMatch(f.detail, /해집합이/);
+});

@@ -252,6 +252,41 @@ function classify(obj, asts, ctx) {
     }
   }
 
+  // ── 등식 ∧ 부등식 → 제한된 해집합 (반원, 선분, 부채꼴 경계 …)
+  //
+  // 부등식이 하나라도 끼면 전부 "영역"으로 읽던 탓에, x²+y²=4 ∧ x>0 이
+  // 조건을 만족하는 점이 없는 영역으로 판정되어 빈 화면이 나왔다.
+  // 등식이 함께 있으면 영역이 아니라 **조건이 걸린 곡선**이다.
+  if (main.type === 'logic' && main.op === 'and' && isRegion(main)) {
+    const eqs = collectEqs(main);
+    const conds = collectEqs(main, true).filter((n) => n.op !== '=');
+    if (eqs.length && conds.length) {
+      const cond = conds.reduce((a, b) => (a ? { type: 'logic', op: 'and', a, b } : b), null);
+      if (eqs.length === 1) {
+        // 등식 하나 — 우변에 조건을 얹어 { } 제한과 똑같은 꼴로 만든다
+        const restricted = {
+          type: 'cmp', op: '=', a: eqs[0].a,
+          b: { type: 'piece', cases: [{ cond, value: eqs[0].b }], otherwise: null },
+        };
+        classify(obj, [restricted], ctx);
+        if (!obj.error) {
+          obj.restricted = true;
+          obj.label = format(main);
+        }
+        return obj;
+      }
+      // 등식이 여럿 — 연립해를 구한 뒤 조건으로 거른다
+      const inner = eqs.reduce((a, b) => ({ type: 'logic', op: 'and', a, b }));
+      classify(obj, [inner], ctx);
+      if (!obj.error) {
+        obj.filter = predicate(cond, ctx);
+        obj.restricted = true;
+        obj.label = format(main);
+      }
+      return obj;
+    }
+  }
+
   // ── 연립방정식 (등식 ∧ 등식) → 해는 점열
   if (main.type === 'logic' && main.op === 'and' && !isRegion(main)
       && collectEqs(main).length >= 2
@@ -332,7 +367,11 @@ function classify(obj, asts, ctx) {
       }
       obj.kind = 'implicit';
       obj.f = residual(main, ctx);
-      obj.exprAst = main;
+      {
+        const st = stripRestriction(main);
+        obj.exprAst = st.ast;
+        if (st.restricted) obj.restricted = true;
+      }
       obj.label = format(main);
       return obj;
     }
@@ -342,7 +381,11 @@ function classify(obj, asts, ctx) {
       obj.kind = 'equation1d';
       obj.varName = v;
       obj.f = residual(main, ctx);
-      obj.exprAst = main;
+      {
+        const st = stripRestriction(main);
+        obj.exprAst = st.ast;
+        if (st.restricted) obj.restricted = true;
+      }
       obj.label = format(main);
       return obj;
     }
@@ -470,6 +513,29 @@ function referencesEarlier(node, name, idxVar) {
     for (const k of ['args', 'items']) if (n[k]) n[k].forEach(walk);
   })(node);
   return found;
+}
+
+/**
+ * `{조건}` 제한을 벗겨 낸 식.
+ * 반원도 원의 일부이므로, 종류를 따질 때는 조건을 떼고 본래 식을 본다.
+ * 조건이 붙어 있었으면 두 번째 값으로 알린다.
+ */
+export function stripRestriction(node) {
+  let found = false;
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return n;
+    if (n.type === 'piece' && n.cases.length === 1 && !n.otherwise && n.cases[0].value) {
+      found = true;
+      return walk(n.cases[0].value);
+    }
+    if (n.type === 'piece') return n;                 // 조각별 식은 그대로 둔다
+    const out = { ...n };
+    for (const k of ['a', 'b', 'arg']) if (n[k] && n[k].type) out[k] = walk(n[k]);
+    if (Array.isArray(n.args)) out.args = n.args.map(walk);
+    return out;
+  };
+  const ast = walk(node);
+  return { ast, restricted: found };
 }
 
 /** 값이 정해진 이름들을 정확한 유리수로 (기호 계산에 넘기기 위해) */
@@ -756,13 +822,20 @@ export function computeObject(obj, bounds, opts = {}) {
       return { mask, polylines, dash: [6, 4], points: [] };
     }
     case 'system': {
+      // 조건이 걸린 연립(x²+y²=4 ∧ y=x ∧ x>0)은 해를 구한 뒤 조건으로 거른다
+      const keep = obj.filter
+        ? (r) => {
+          const points = (r.points || []).filter(([x, y]) => obj.filter({ x, y }));
+          return { ...r, points, isolated: points, empty: points.length === 0 };
+        }
+        : (r) => r;
       if (obj.oneVar) {
         const v = obj.oneVar;
         const lo = v === 'y' ? b.ymin : b.xmin;
         const hi = v === 'y' ? b.ymax : b.xmax;
         const roots = intersectRoots(obj.residuals.map((f) => (t) => f({ [v]: t })), lo, hi);
         const pts = roots.map((t) => (v === 'y' ? [0, t] : [t, 0]));
-        return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
+        return keep({ points: pts, isolated: pts, polylines: [], empty: pts.length === 0 });
       }
       const fns = obj.residuals.map((f) => (x, y) => f({ x, y }));
 
@@ -792,21 +865,21 @@ export function computeObject(obj, bounds, opts = {}) {
           if (pts.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < scale * 1e-6)) continue;
           pts.push(p);
         }
-        return {
+        return keep({
           points: pts, isolated: pts, polylines: [], empty: pts.length === 0, ghost: true,
-        };
+        });
       }
 
       const s = fns.length === 2
         ? solveSystem2D(fns[0], fns[1], b, opts)
         : solveSystemN(fns, b, opts);
-      return {
+      return keep({
         points: s.points,
         polylines: s.curves.flatMap((c) => c.polylines),
         ghost: true,
         isolated: s.points,
         empty: s.points.length === 0,
-      };
+      });
     }
     case 'union': {
       const out = { polylines: [], points: [], isolated: [] };
@@ -1180,7 +1253,10 @@ function analyzeImplicit(obj, bounds, ctx) {
   const poly = ctx ? polyOf(obj, ctx) : null;
   const exact = poly && poly.degree <= 2 ? classifyConicExact(poly) : null;
   if (exact) {
-    let detail = `계수를 정확히 따져 보면 ${exact.kind} 입니다.`;
+    // 조건이 걸린 식(x²+y²=4 ∧ x>0)은 곡선 **전체**가 아니라 그 일부만 그려진다.
+    // 종류는 본래 식에서 정확히 알 수 있지만, 해집합과 같다고 말하면 안 된다.
+    const part = obj.restricted ? '의 일부' : '';
+    let detail = `계수를 정확히 따져 보면 ${exact.kind}${part} 입니다.`;
     if (exact.radiusSq) {
       const r2 = exact.radiusSq;
       detail += ` 반지름² = ${r2.toString()}`;
@@ -1192,10 +1268,15 @@ function analyzeImplicit(obj, bounds, ctx) {
     }
     detail += `  판별식 B²−4AC = ${exact.disc.toString()}`
       + `, 행렬식 = ${exact.det.toString()}`;
+    // 직선·두 직선·한 점은 이차곡선이라 부르면 어색하다
+    const proper = ['원', '타원', '포물선', '쌍곡선'].includes(exact.kind);
     findings.push({
-      type: 'conic-exact', title: `이차곡선: ${exact.kind}`, confidence: 1,
+      type: 'conic-exact',
+      title: `${proper ? '이차곡선' : '해집합'}: ${exact.kind}${part}`, confidence: 1,
       detail, formula: conicEquation(poly),
-      hint: '표본을 맞춰 본 것이 아니라 계수를 유리수로 정확히 계산한 결과입니다.',
+      hint: obj.restricted
+        ? '조건에 맞는 부분만 그렸습니다. 종류는 조건을 떼어 낸 본래 식에서 정확히 계산했습니다.'
+        : '표본을 맞춰 본 것이 아니라 계수를 유리수로 정확히 계산한 결과입니다.',
     });
   } else if (poly && poly.degree > 2) {
     findings.push({
@@ -1216,12 +1297,18 @@ function analyzeImplicit(obj, bounds, ctx) {
       const conic = fitConic(sample.slice(0, 120));
       // 등고선에서 뽑은 표본은 이산화 오차가 있으므로 임계값을 그에 맞춘다
       if (conic && conic.residual < 1e-4) {
-        let detail = `해집합이 ${conic.kind} 입니다.`;
+        // 표본을 맞춰 본 것이므로 "해집합이 원이다" 가 아니라 "원 위에 놓인다" 로 적는다.
+        // max(x,y) = 1 은 두 직선 위에 놓이지만 해집합은 그 일부(ㄱ 자)일 뿐이다.
+        let detail = `그려진 곡선이 ${conic.kind} 위에 놓입니다.`;
         if (conic.radius) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}), 반지름 ${pretty(conic.radius)}.`;
         else if (conic.center) detail += ` 중심 (${pretty(conic.center[0])}, ${pretty(conic.center[1])}).`;
-        if (conic.rotation) detail += ` 축이 ${trimNum((conic.rotation * 180) / Math.PI, 3)}° 기울어져 있습니다.`;
+        // 원은 축이 없으므로 기울기를 말하지 않는다 (표본 잡음이 만든 각도다)
+        if (conic.rotation && conic.kind !== '원') {
+          detail += ` 축이 ${trimNum((conic.rotation * 180) / Math.PI, 3)}° 기울어져 있습니다.`;
+        }
         findings.push({ type: 'conic', title: `이차곡선: ${conic.kind}`, detail,
-          formula: conic.equation, confidence: 0.9 });
+          formula: conic.equation, confidence: 0.9,
+          hint: '곡선 위 표본을 맞춰 본 결과입니다. 해집합이 이 곡선의 일부일 수 있습니다.' });
       }
     }
     findings.push({ type: 'branches', title: `곡선 가지 ${nCurves}개`, confidence: 0.7,

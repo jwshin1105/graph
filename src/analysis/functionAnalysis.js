@@ -45,18 +45,30 @@ export function analyzeFunction(f, opts = {}) {
     return { findings, summary: `f(x) = ${S(c)} (상수함수)`, roots: [], maxima: [], minima: [], inflex: [] };
   }
 
-  // 정의역 구멍
-  const holes = [];
+  // ── 정의역 ──────────────────────────────────────────────
+  // √x 의 x < 0 은 "구멍"이 아니라 정의역 밖이다. 표본 하나 폭의 빈틈(1/x 의 x = 0)만
+  // 구멍이라 부르고, 넓게 이어진 빈틈은 정의역의 경계로 보고 **경계값을 이분법으로 좁힌다**.
   const step = (xmax - xmin) / N;
-  for (let i = 1; i <= N; i++) {
-    if (isFinite(ys[i - 1]) !== isFinite(ys[i])) {
-      const x = isFinite(ys[i]) ? xs[i - 1] : xs[i];
-      if (!holes.length || Math.abs(holes[holes.length - 1] - x) > 2.5 * step) holes.push(x);
-    }
+  const dom = domainOf(f, xs, ys, step);
+  const holes = dom.holes;
+  if (dom.holes.length) {
+    push({ type: 'domain', title: '정의역에 구멍', confidence: 1,
+      detail: `x = ${dom.holes.slice(0, 6).map((h) => S(h)).join(', ')} 에서 정의되지 않습니다.` });
   }
-  if (holes.length) {
-    push({ type: 'domain', title: '정의역이 끊깁니다', confidence: 1,
-      detail: `대략 x ≈ ${holes.slice(0, 6).map((h) => trimNum(h, 3)).join(', ')} 부근에서 정의되지 않습니다.` });
+  if (dom.intervals.length && !(dom.intervals.length === 1 && dom.full)) {
+    // 화면 끝에 닿은 쪽은 경계가 아니라 "여기까지밖에 못 봤다" 는 뜻이므로 적지 않는다
+    const txt = dom.intervals.slice(0, 4).map(([a, b]) => {
+      const openL = a <= xmin + step * 0.5;
+      const openR = b >= xmax - step * 0.5;
+      if (openL && openR) return '전 구간';
+      if (openL) return `x ≤ ${S(b)}`;
+      if (openR) return `x ≥ ${S(a)}`;
+      return `${S(a)} ≤ x ≤ ${S(b)}`;
+    }).join(', 또는 ');
+    push({ type: 'domain-range', title: '정의역', confidence: 1,
+      detail: dom.intervals.length
+        ? `보이는 범위에서 ${txt} 에서만 정의됩니다.`
+        : '보이는 범위에서 정의되는 곳이 없습니다.' });
   }
 
   // y 절편
@@ -92,14 +104,30 @@ export function analyzeFunction(f, opts = {}) {
   }
 
   // 극값 — 도함수의 "부호가 바뀌는" 영점만 본다 (접하는 영점은 안장점이라 극값이 아니다)
-  const crit = findRoots(df, xmin, xmax, 3000, 1e-9, { tangential: false });
+  // 도함수의 영점만 보면 **미분할 수 없는 극값**을 놓친다.
+  // |sin x| 의 x = π 에서 도함수는 −1 에서 +1 로 뛰기만 할 뿐 0 을 지나지 않는다.
+  // 그래서 표본 배열에서 봉우리·골을 직접 집어 후보에 더한다.
+  const crit = mergeCandidates(
+    findRoots(df, xmin, xmax, 3000, 1e-9, { tangential: false }),
+    sampleExtrema(f, xs, ys),
+    (xmax - xmin) / 1000,
+  );
   const maxima = [], minima = [];
-  for (const c of crit) {
-    const s = d2f(c);
+  // 이계도함수의 부호로 가르면 두 가지를 놓친다.
+  //   · y = −|x| 의 꼭짓점 — 기호 미분이 f″ ≡ 0 을 주어 극대가 통째로 사라졌다
+  //   · y = floor x 의 뜀 — 도함수가 튀어 없는 극값이 생겼다
+  // 그래서 **양옆의 값**으로 직접 가른다. 간격은 이웃한 임계점까지의 거리에 맞춘다.
+  for (let i = 0; i < crit.length; i++) {
+    const c = crit[i];
     const y = f(c);
     if (!isFinite(y)) continue;
-    if (s < -1e-9) maxima.push([c, y]);
-    else if (s > 1e-9) minima.push([c, y]);
+    const gapL = i > 0 ? c - crit[i - 1] : Infinity;
+    const gapR = i < crit.length - 1 ? crit[i + 1] - c : Infinity;
+    const h = Math.min((xmax - xmin) / 500, gapL / 3, gapR / 3);
+    const isMax = smoothExtremum(f, c, h, -1);
+    const isMin = smoothExtremum(f, c, h, 1);
+    if (isMax && !isMin) maxima.push([c, y]);
+    else if (isMin && !isMax) minima.push([c, y]);
   }
   if (maxima.length) push({ type: 'max', title: `극대 ${maxima.length}곳`, confidence: 0.95,
     detail: maxima.slice(0, 8).map(([x, y]) => `(${S(x)}, ${S(y)})`).join(', '), points: maxima });
@@ -144,6 +172,123 @@ export function analyzeFunction(f, opts = {}) {
       : '특별한 성질을 찾지 못했습니다.'),
     roots, maxima, minima, inflex,
   };
+}
+
+/**
+ * 표본 배열에서 봉우리·골이 되는 자리를 집어 황금분할로 다듬는다.
+ * 도함수가 0 을 지나지 않고 뛰기만 하는 꼭짓점(|x|, |sin x| 의 x = π)을 잡기 위한 것이다.
+ */
+function sampleExtrema(f, xs, ys, limit = 500) {
+  const out = [];
+  for (let i = 1; i < xs.length - 1 && out.length < limit; i++) {
+    const a = ys[i - 1], b = ys[i], c = ys[i + 1];
+    if (!isFinite(a) || !isFinite(b) || !isFinite(c)) continue;
+    const low = b <= a && b <= c && (b < a || b < c);
+    const high = b >= a && b >= c && (b > a || b > c);
+    if (low || high) out.push(goldenSearch(f, xs[i - 1], xs[i + 1], low));
+  }
+  return out;
+}
+
+/** [lo, hi] 안에서 최소(또는 최대)가 되는 자리 */
+function goldenSearch(f, lo, hi, wantMin) {
+  const better = (u, v) => (wantMin ? u < v : u > v);
+  const R = (Math.sqrt(5) - 1) / 2;
+  let a = lo, b = hi;
+  let c = b - R * (b - a), d = a + R * (b - a);
+  let fc = f(c), fd = f(d);
+  for (let i = 0; i < 60 && b - a > Math.abs(b) * 1e-15 + 1e-15; i++) {
+    if (better(fc, fd)) { b = d; d = c; fd = fc; c = b - R * (b - a); fc = f(c); }
+    else { a = c; c = d; fc = fd; d = a + R * (b - a); fd = f(d); }
+  }
+  return (a + b) / 2;
+}
+
+/** 두 후보 목록을 합치되 tol 안에 있는 것은 하나로 */
+function mergeCandidates(a, b, tol) {
+  const all = [...a, ...b].filter(isFinite).sort((p, q) => p - q);
+  const out = [];
+  for (const x of all) if (!out.length || x - out[out.length - 1] > tol) out.push(x);
+  return out;
+}
+
+/**
+ * 보이는 범위에서 함수가 정의되는 곳.
+ * 표본 한두 칸짜리 빈틈은 **구멍**(1/x 의 x = 0), 그보다 넓으면 **정의역의 경계**로 보고
+ * 경계 위치는 이분법으로 좁힌다 (√x → x = 0 을 소수점 아래까지 정확히).
+ */
+function domainOf(f, xs, ys, step) {
+  const N = xs.length - 1;
+  const ok = ys.map(isFinite);
+  const runs = [];
+  for (let i = 0; i <= N; i++) {
+    if (!ok[i]) continue;
+    if (runs.length && runs[runs.length - 1][1] === i - 1) runs[runs.length - 1][1] = i;
+    else runs.push([i, i]);
+  }
+  if (!runs.length) return { holes: [], intervals: [], full: false };
+
+  // 경계를 이분법으로 좁힌다 — 정의된 쪽에서 정의되지 않은 쪽으로
+  const edge = (iIn, iOut) => {
+    let a = xs[iIn], b = xs[iOut];
+    for (let k = 0; k < 60; k++) {
+      const m = (a + b) / 2;
+      if (isFinite(f(m))) a = m; else b = m;
+    }
+    return a;
+  };
+
+  const holes = [];
+  const intervals = [];
+  for (let r = 0; r < runs.length; r++) {
+    const [i0, i1] = runs[r];
+    const lo = i0 === 0 ? xs[0] : edge(i0, i0 - 1);
+    const hi = i1 === N ? xs[N] : edge(i1, i1 + 1);
+    intervals.push([lo, hi]);
+    // 다음 구간과의 빈틈이 표본 두 칸 이하면 "구멍"
+    if (r + 1 < runs.length && xs[runs[r + 1][0]] - xs[i1] <= 3 * step) {
+      holes.push((hi + edge(runs[r + 1][0], runs[r + 1][0] - 1)) / 2);
+    }
+  }
+  // 구멍만 있는 경우(1/x)는 정의역을 따로 적지 않는다
+  const merged = [];
+  for (const iv of intervals) {
+    const prev = merged[merged.length - 1];
+    if (prev && iv[0] - prev[1] <= 3 * step) prev[1] = iv[1];
+    else merged.push(iv.slice());
+  }
+  const full = merged.length === 1
+    && merged[0][0] <= xs[0] + step * 0.5 && merged[0][1] >= xs[N] - step * 0.5;
+  return { holes, intervals: merged, full };
+}
+
+/**
+ * c 가 정말 매끄러운 극값인지.
+ * 계단함수의 뜀은 양옆 값만 보면 극값처럼 보이지만, 간격을 4배 좁혀도 낙차가 줄지 않는다.
+ * 매끄러운 극값이라면 낙차가 h² 에 비례해 확 줄고, 뾰족점(−|x|)도 h 에 비례해 줄어든다.
+ * @param {number} sign  −1 이면 극대, +1 이면 극소
+ */
+function smoothExtremum(f, c, h, sign) {
+  const m = f(c);
+  if (!isFinite(m)) return false;
+  const drop = (t) => {
+    const a = f(c - t), b = f(c + t);
+    if (!isFinite(a) || !isFinite(b)) return null;
+    return [sign * (a - m), sign * (b - m)];
+  };
+  const big = drop(h);
+  const small = drop(h / 4);
+  if (!big || !small) return false;
+  // 봐 주는 폭은 반올림 잡음의 크기, 곧 값의 ulp 몇 배까지다.
+  // 더 크게 잡으면 y = 10¹⁰ − x² 처럼 값에 비해 낙차가 티끌인 극값을 놓친다.
+  const eps = Math.abs(m) * Number.EPSILON * 4 + Number.MIN_VALUE;
+  if (big[0] < -eps || big[1] < -eps) return false;      // 더 나은 값이 옆에 있으면 극값이 아니다
+  // **양쪽 모두** 엄격히 낮아야(높아야) 극값이다.
+  // floor x 는 도함수가 계단마다 0 이라 표본마다 임계점이 잡히는데,
+  // 그중 어느 것도 봉우리가 아니다 — 계단의 오른쪽은 값이 같고 왼쪽만 한 칸 낮을 뿐이다.
+  if (Math.min(big[0], big[1]) <= eps) return false;
+  const shrinks = (a, b) => a <= eps || b / a < 0.4;
+  return shrinks(big[0], small[0]) && shrinks(big[1], small[1]);
 }
 
 /**
@@ -295,7 +440,17 @@ function asymptotes(f, xmin, xmax, holes) {
       continue;
     }
     const b = y1 - m * x1;
-    if (Math.abs(y3 - (m * x3 + b)) < 1e-4 * Math.max(1, Math.abs(y3))) {
+    // 사선 점근선은 나머지 f(x) − (mx+b) 가 **0 으로 줄어들어야** 한다.
+    // 상대오차로만 재면 floor x 도 y = x 를 점근선으로 갖게 된다 (나머지가 (−1, 0] 을 맴돌 뿐인데도).
+    // 정수 자리만 짚으면 floor 가 딱 맞아떨어지므로 반 칸 어긋난 자리에서 잰다.
+    const resid = [1e3, 1e5, 1e7, 1e9].map((sc) => {
+      const x = dir * (sc + 0.5);
+      const y = f(x);
+      return isFinite(y) ? Math.abs(y - (m * x + b)) : NaN;
+    });
+    const shrinking = resid.every((r) => !Number.isNaN(r))
+      && resid[3] <= Math.max(1e-6, resid[0] * 0.2);
+    if (shrinking) {
       const bb = round(b);
       out.push({ type: 'oasym', title: `사선 점근선 (x → ${at})`, confidence: 0.8,
         detail: `y = ${coefTerm(round(m), 'x')}${Math.abs(bb) < 1e-12 ? '' : signed(bb)}`,
