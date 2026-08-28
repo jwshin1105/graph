@@ -227,6 +227,22 @@ body {
 .slider-row input[type="range"] {
   flex: 1; min-width: 0; height: 18px; accent-color: var(--accent); cursor: pointer;
 }
+.iconbtn.scan { font-size: 10.5px; padding: 3px 5px; }
+.slider-track { position: relative; flex: 1; min-width: 0; }
+.slider-track input[type="range"] { width: 100%; }
+.sweep-ticks {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 7px; pointer-events: none;
+}
+.sweep-ticks .tick {
+  position: absolute; width: 2px; height: 7px; border-radius: 1px;
+  transform: translateX(-1px);
+}
+.sweep-ticks .tick.change { background: var(--danger); }
+.sweep-ticks .tick.event { background: var(--ok); }
+.card.jumpable { cursor: pointer; }
+.card.jumpable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel-2)); }
+.card-d { white-space: pre-line; }
+
 .slider-val {
   font-family: var(--mono); font-size: 11.5px; color: var(--accent);
   min-width: 76px; text-align: right; font-weight: 600;

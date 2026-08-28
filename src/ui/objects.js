@@ -451,6 +451,15 @@ function referencesEarlier(node, name, idxVar) {
   return found;
 }
 
+/** 이 식이 주어진 이름(슬라이더 등)에 기대고 있는가 */
+export function dependsOn(obj, name) {
+  if (!obj || !obj.asts) return false;
+  for (const ast of obj.asts) {
+    if (freeVars(ast).has(name)) return true;
+  }
+  return false;
+}
+
 /** 식이 참조하지만 아직 정의되지 않은 이름들 */
 export function missingRefs(obj, ctx) {
   const out = new Set();

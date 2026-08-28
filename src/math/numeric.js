@@ -270,7 +270,7 @@ export function pretty(x, tol = 1e-9) {
   }
   for (const { v, s } of SYMBOLS) {
     const q = toRational(x / v, 100, tol * 10);
-    if (q && Math.abs(q.p) <= 200 && q.q <= 100) {
+    if (q && q.p !== 0 && Math.abs(q.p) <= 200 && q.q <= 100) {
       const mag = Math.abs(q.p) === 1 ? s : `${Math.abs(q.p)}${s}`;
       const body = q.q === 1 ? mag : `${mag}/${q.q}`;
       return q.p < 0 ? `-${body}` : body;

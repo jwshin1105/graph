@@ -2,7 +2,8 @@
 
 import { View } from './view.js';
 import { Renderer, PALETTE, SWATCHES, DASHES, defaultStyle } from './renderer.js';
-import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf } from './objects.js';
+import { createContext, createObject, computeObject, analyzeObject, missingRefs, intersectionsOf, dependsOn } from './objects.js';
+import { sweepSteps } from '../analysis/sweep.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { renderMath } from './mathhtml.js';
 import { setAngleMode, getAngleMode } from '../math/functions.js';
@@ -35,6 +36,9 @@ const EXAMPLES = [
   ['P_n = (n, 2^n); 1 <= n <= 8', '점열을 직접 만들어 규칙 확인'],
   ['Q_k = (cos(2πk/7), sin(2πk/7)); 0 <= k <= 6', '정7각형 — 회전 규칙까지 읽어냄'],
   ['a = 2; y = a x^2', '슬라이더로 계수를 끌어 보기'],
+  ['a = 1; -2 <= a <= 2', '훑기 버튼을 눌러 볼 파라미터'],
+  ['x^2 + a y^2 = 1', '↑ 와 함께 — 쌍곡선·두 직선·타원·원이 갈리는 지점을 찾는다'],
+  ['y = x^3 + a x', '↑ 와 함께 — 실근이 3개에서 1개로 바뀌는 지점'],
   ['y = x^2 {0 < x < 3}', '정의역 제한 — 조건이 참인 곳만'],
   ['y = {x < 0: -x, x^2}', '조각별로 정의한 함수'],
   ['y = [1, 2, 3] x', '리스트로 여러 곡선을 한 번에'],
@@ -554,6 +558,11 @@ class App {
     mode.className = 'iconbtn play';
     mode.textContent = o.slider.mode === 'oscillate' ? '↔' : '↻';
     mode.title = o.slider.mode === 'oscillate' ? '끝에서 되돌아옴' : '끝에서 처음으로';
+    const scan = document.createElement('button');
+    scan.className = 'iconbtn play scan';
+    scan.textContent = '훑기';
+    scan.title = '값을 훑으며 해집합의 분류가 바뀌는 지점을 찾는다';
+    scan.onclick = () => this.runSweep(o, scan);
 
     const input = document.createElement('input');
     input.type = 'range';
@@ -601,8 +610,149 @@ class App {
       mode.title = o.slider.mode === 'oscillate' ? '끝에서 되돌아옴' : '끝에서 처음으로';
     };
     o.slider.apply = apply;
-    wrap.append(play, mode, input, out);
+    const track = document.createElement('div');
+    track.className = 'slider-track';
+    track.append(input);
+    if (o.sweep) track.append(this.sweepTicks(o));
+    wrap.append(play, mode, scan, track, out);
     return wrap;
+  }
+
+  /** 슬라이더 위에 분기점 눈금을 얹는다 */
+  sweepTicks(o) {
+    const marks = document.createElement('div');
+    marks.className = 'sweep-ticks';
+    const span = o.slider.max - o.slider.min;
+    const put = (v, cls, title) => {
+      if (!(span > 0) || v < o.slider.min || v > o.slider.max) return;
+      const el = document.createElement('span');
+      el.className = `tick ${cls}`;
+      el.style.left = `${((v - o.slider.min) / span) * 100}%`;
+      el.title = title;
+      marks.append(el);
+    };
+    for (const t of o.sweep.transitions) put(t.at, 'change', `${t.atText}: ${t.before.label} → ${t.after.label}`);
+    for (const e of o.sweep.events) put(e.at, 'event', `${e.atText}: ${e.sig.label}`);
+    return marks;
+  }
+
+  /**
+   * 슬라이더를 훑으며 분류가 바뀌는 지점을 찾는다.
+   * 계산이 무거우므로 프레임마다 조금씩 나누어 돌린다 — 화면이 멈추지 않게.
+   */
+  async runSweep(o, btn) {
+    if (this.sweeping) return;
+    // 슬라이더 자신과 값을 담기만 하는 줄(상수·리스트)은 뺀다
+    const deps = this.objects.filter((x) => x.visible && !x.error
+      && x !== o && x.defName !== o.defName
+      && !['constant', 'list', 'value', 'defined', 'empty'].includes(x.kind)
+      && dependsOn(x, o.defName));
+    if (!deps.length) { this.toast(`${o.defName} 를 쓰는 그래프가 없습니다`); return; }
+
+    this.sweeping = true;
+    const original = o.value;
+    btn.textContent = '0%';
+    btn.disabled = true;
+    const setParam = (t) => {
+      const def = this.ctx.defs.get(o.defName);
+      if (!def) return;
+      def.body = { type: 'num', value: t };
+      def.compiled = null;
+    };
+    const it = sweepSteps({
+      objects: deps,
+      setParam,
+      min: o.slider.min,
+      max: o.slider.max,
+      bounds: this.view.bounds(),
+      compute: (obj, b, opts) => computeObject(obj, b, opts),
+      restore: original,
+    });
+
+    let res = null;
+    for (;;) {
+      const t0 = performance.now();
+      let step;
+      // 한 프레임에 12ms 어치만 돌리고 화면에 숨 쉴 틈을 준다
+      do { step = it.next(); } while (!step.done && performance.now() - t0 < 12);
+      if (step.done) { res = step.value; break; }
+      btn.textContent = `${Math.round((step.value || 0) * 100)}%`;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+
+    setParam(original);
+    o.value = original;
+    o.sweep = res;
+    this.sweeping = false;
+    btn.disabled = false;
+    btn.textContent = '훑기';
+    this.needsCompute = true;
+    this.compute();
+    this.renderInputs();
+    this.showSweep(o);
+    this.schedule();
+  }
+
+  showSweep(o) {
+    const res = o.sweep;
+    if (!res) return;
+    const findings = [];
+    for (const st of res.stages) {
+      findings.push({
+        type: 'stage', confidence: 1,
+        title: `${o.defName} ∈ [${st.fromText}, ${st.toText}]`,
+        detail: st.sig ? st.sig.label : '판정할 수 없음',
+      });
+    }
+    for (const t of res.transitions) {
+      findings.push({
+        type: 'transition', confidence: 1,
+        title: `분기점  ${o.defName} = ${t.atText}${t.approx ? ' (근사)' : ''}`,
+        detail: `${t.before.label}  →  ${t.after.label}`
+          + (t.isolated ? `\n이 값에서만: ${t.isolated.label}` : ''),
+        jump: t.at,
+      });
+    }
+    for (const e of res.events) {
+      findings.push({
+        type: 'moment', confidence: 1,
+        title: `특이한 순간  ${o.defName} = ${e.atText}`,
+        detail: `이 값에서만 ${e.sig.label} 가 됩니다.`,
+        jump: e.at,
+      });
+    }
+    const n = res.transitions.length + res.events.length;
+    this.paintAnalysis({
+      title: '파라미터 훑기',
+      lead: n
+        ? `${o.defName} 를 ${o.slider.min} 에서 ${o.slider.max} 까지 훑어 `
+          + `분류가 달라지는 자리 ${n}곳을 찾았습니다. 카드를 누르면 그 값으로 옮겨 갑니다.`
+        : `${o.defName} 를 통틀어 해집합의 분류가 달라지지 않습니다.`,
+      findings,
+      summary: '훑기',
+    }, `${o.defName} = ${trimNum(o.slider.min, 4)} … ${trimNum(o.slider.max, 4)}`);
+
+    // 분기점 카드를 누르면 그 값으로 이동
+    const host = document.getElementById('analysis');
+    const cards = [...host.querySelectorAll('.card')];
+    findings.forEach((f, i) => {
+      if (f.jump === undefined || !cards[i]) return;
+      cards[i].classList.add('jumpable');
+      cards[i].onclick = () => {
+        const def = this.ctx.defs.get(o.defName);
+        if (def) { def.body = { type: 'num', value: f.jump }; def.compiled = null; }
+        o.value = f.jump;
+        o.label = `${o.defName} = ${pretty(f.jump)}`;
+        if (o.slider.render) o.slider.render(f.jump);
+        const keep = o.source.includes(';') ? o.source.slice(o.source.indexOf(';')) : '';
+        o.source = `${o.defName} = ${trimNum(f.jump, 8)}${keep}`;
+        this.needsCompute = true;
+        this.compute();
+        this.renderInputs();
+        this.schedule();
+        this.scheduleSave();
+      };
+    });
   }
 
   /** 재생 중인 슬라이더를 시간에 따라 움직인다 */
