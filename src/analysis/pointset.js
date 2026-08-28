@@ -20,7 +20,16 @@ function spread(v) {
  * @param {number[][]} points [[x,y], …]
  * @returns {{findings:Array, summary:string}}
  */
+/**
+ * @param {number[][]} points
+ * @param {object} [opts]
+ * @param {boolean} [opts.sampled]  곡선에서 뽑은 표본이면 true.
+ *   표본이 놓인 차례와 간격은 표본화 방식이 정한 것이지 점열의 성질이 아니므로,
+ *   순서에 기대는 검사(수열·이웃 간격·닮음변환)를 건너뛴다. 그러지 않으면
+ *   (cos t, sin 2t) 의 표본에서 "x 좌표가 4계 선형 점화식을 만족한다" 같은 말이 나온다.
+ */
 export function analyzePointSet(points, opts = {}) {
+  const ordered = !opts.sampled;
   const raw = points.filter((p) => p && isFinite(p[0]) && isFinite(p[1]));
   // 같은 점이 여러 번 들어오면 "세 점이 한 직선 위" 같은 헛된 결론이 나온다.
   // 중복은 먼저 걷어 내고, 몇 개가 겹쳤는지만 따로 알린다.
@@ -55,7 +64,8 @@ export function analyzePointSet(points, opts = {}) {
   // 1) x 좌표가 등차인가 → y 를 수열로 분석
   const dx = [];
   for (let i = 1; i < n; i++) dx.push(xs[i] - xs[i - 1]);
-  const uniformX = n >= 3 && dx.every((d) => near(d, dx[0], sx)) && Math.abs(dx[0]) > 1e-12;
+  const uniformX = ordered && n >= 3
+    && dx.every((d) => near(d, dx[0], sx)) && Math.abs(dx[0]) > 1e-12;
   if (uniformX) {
     push({ type: 'grid-x', title: 'x 좌표가 등간격', confidence: 1,
       detail: `x 가 ${pretty(xs[0])} 부터 간격 ${pretty(dx[0])} 로 일정하게 놓여 있습니다.`,
@@ -64,7 +74,7 @@ export function analyzePointSet(points, opts = {}) {
     for (const f of seq.findings.slice(0, 3)) {
       push({ ...f, title: `y 값의 규칙: ${f.title}`, source: 'sequence' });
     }
-  } else if (n >= 4) {
+  } else if (ordered && n >= 4) {
     // x 가 고르지 않아도 x 좌표 자체가 규칙을 이룰 수 있다
     // (삼각방정식의 해처럼 갈래 등차수열인 경우가 대표적)
     const xr = analyzeSequence(xs, { name: 'x' });
@@ -110,7 +120,7 @@ export function analyzePointSet(points, opts = {}) {
   for (const s of sym) push({ type: 'symmetry', title: s.title, detail: s.detail, confidence: 0.85 });
 
   // 6) 이웃 점 사이 거리의 규칙
-  if (n >= 4) {
+  if (ordered && n >= 4) {
     const dists = [];
     for (let i = 1; i < n; i++) dists.push(Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]));
     const ds = analyzeSequence(dists, { name: 'd' });
@@ -123,11 +133,11 @@ export function analyzePointSet(points, opts = {}) {
   }
 
   // 7) 극좌표에서의 규칙 (정다각형 배치)
-  const polar = polarRegularity(pts);
+  const polar = ordered ? polarRegularity(pts) : null;
   if (polar) push(polar);
 
   // 8) 닮음변환 규칙: p_{k+1} = w·p_k + c (복소수) — 회전·확대·로그나선을 한 번에 잡는다
-  const sim = similarityRule(given);
+  const sim = ordered ? similarityRule(given) : null;
   if (sim) push(sim);
 
   // 9) 함수 관계 y = f(x)

@@ -157,8 +157,8 @@ export function analyzeFunction(f, opts = {}) {
   const per = isLinear ? null : checkPeriod(f, xmin, xmax);
   if (per) push(per);
 
-  // 점근선
-  for (const a of asymptotes(f, xmin, xmax, holes)) push(a);
+  // 점근선 — 직선·상수함수는 자기 자신이 점근선이라 알릴 것이 없다
+  if (!isLinear) for (const a of asymptotes(f, xmin, xmax, holes)) push(a);
 
   // 단조성
   const mono = monotonicity(xs, ys);

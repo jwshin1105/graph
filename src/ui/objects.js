@@ -10,6 +10,7 @@ import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask, polyl
 import { newton2D, levenbergMarquardt, trimNum as tn } from '../math/numeric.js';
 import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
+import { analyzeCurve } from '../analysis/curve.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
 import { fitConic } from '../analysis/conic.js';
 import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions } from '../analysis/exact.js';
@@ -1156,8 +1157,10 @@ export function analyzeObject(obj, bounds, ctx) {
             pts.push([line[i], line[i + 1]]);
           }
         }
-        const r = analyzePointSet(pts.slice(0, 60));
-        return { title: '곡선 분석', ...r };
+        // 곡선에서 뽑은 표본이므로 놓인 차례·간격에 기대는 검사는 건너뛴다
+        const r = analyzePointSet(pts.slice(0, 60), { sampled: true });
+        const geo = analyzeCurve(d.polylines, { bounds });
+        return { title: '곡선 분석', ...r, findings: [...geo.findings, ...r.findings] };
       }
       default:
         return null;
@@ -1313,6 +1316,11 @@ function analyzeImplicit(obj, bounds, ctx) {
     }
     findings.push({ type: 'branches', title: `곡선 가지 ${nCurves}개`, confidence: 0.7,
       detail: `보이는 범위에서 ${nCurves}개의 연결된 곡선 조각으로 이루어져 있습니다.` });
+  }
+  if (nCurves) {
+    // 닫혀 있는가, 둘레와 넓이는 얼마인가, 스스로 가로지르는가 —
+    // 계수만 봐서는 나오지 않고 그려 봐야 아는 것들이다
+    findings.push(...analyzeCurve(d.polylines, { bounds }).findings);
   }
 
   if (nPts) {
