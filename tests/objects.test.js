@@ -112,7 +112,10 @@ test('계단함수는 도약에서 선이 끊긴다', () => {
 test('합·곱·정적분 기호를 계산한다', () => {
   assert.equal(make('sum(k^2, k, 1, 5)').value, 55);
   assert.equal(make('prod(k, k, 1, 5)').value, 120);
-  assert.ok(Math.abs(make('integral(x^2, x, 0, 1)').value - 1 / 3) < 1e-9);
+  const it = make('integral(x^2, x, 0, 1)');
+  assert.equal(it.kind, 'integral');
+  assert.ok(Math.abs(it.value - 1 / 3) < 1e-9);
+  assert.ok(it.data.areaFill.length, '넓이를 칠하지 않음');
   assert.ok(Math.abs(make('integral(sin x, 0, pi)').value - 2) < 1e-9);
   const taylor = make('y = sum(x^k/fact(k), k, 0, 12)');
   assert.equal(taylor.kind, 'function');
@@ -274,4 +277,57 @@ test('가질 수 없는 값이면 곡선족 대신 해 없음', () => {
   const o = make('sin(x + y) = 2', ctx);
   const f = analyzeObject(o, B, ctx).findings.find((x) => x.type === 'level-family');
   assert.equal(f.title, '해 없음');
+});
+
+// ── 미적분: 접선·법선과 정적분 ──────────────────────────
+test('접선의 방정식을 세워 그린다', () => {
+  const ctx = createContext();
+  make('f(x) = x^3 - 3x', ctx);
+  const t = make('tangent(f, 2)', ctx);
+  assert.equal(t.kind, 'tangent');
+  assert.equal(t.data.equation, 'y = 9x - 16');       // f′(2) = 9, f(2) = 2
+  assert.deepEqual(t.data.points, [[2, 2]]);
+  assert.ok(t.data.polylines.length);
+});
+
+test('법선은 기울기가 −1/f′ 이고, f′ = 0 이면 세로선', () => {
+  const ctx = createContext();
+  make('f(x) = x^2', ctx);
+  assert.equal(make('normal(f, 1)', ctx).data.equation, 'y = -x/2 + 3/2');
+  // x = 0 에서 f′ = 0 → 법선은 x = 0
+  assert.equal(make('normal(f, 0)', ctx).data.equation, 'x = 0');
+});
+
+test('접선은 식으로 세워 두므로 슬라이더를 따라 움직인다', () => {
+  const ctx = createContext();
+  const slider = make('a = 1', ctx);
+  const t = make('tangent(x^2, a)', ctx);
+  assert.equal(t.data.equation, 'y = 2x - 1');
+  const def = ctx.defs.get('a');
+  def.body = { type: 'num', value: 3 };
+  def.compiled = null;
+  slider.value = 3;
+  assert.equal(computeObject(t, B).equation, 'y = 6x - 9');
+});
+
+test('이름 없이 식을 바로 줘도 된다', () => {
+  assert.equal(make('tangent(sin x, 0)').data.equation, 'y = x');
+});
+
+test('정적분은 값과 함께 넓이를 칠한다', () => {
+  const o = make('integral(sin x, 0, pi)');
+  assert.equal(o.kind, 'integral');
+  assert.ok(Math.abs(o.value - 2) < 1e-9);
+  assert.ok(o.data.areaFill.length);
+  assert.equal(o.data.labels.length, 1);
+});
+
+test('축 아래 부분이 있으면 부호 없는 넓이도 알려 준다', () => {
+  const ctx = createContext();
+  const o = make('integral(sin x, 0, 2pi)', ctx);
+  const f = analyzeObject(o, B, ctx).findings;
+  assert.ok(Math.abs(f[0].detail.includes('0')));
+  const signed = f.find((x) => x.type === 'signed');
+  assert.ok(signed, '축 아래 부분을 알리지 않음');
+  assert.match(signed.detail, /4/);
 });

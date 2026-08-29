@@ -170,6 +170,20 @@ function classify(obj, asts, ctx) {
     return obj;
   }
 
+  // ── 접선·법선: tangent(f, 1), normal(x^2, 2)
+  if (main.type === 'call' && ['tangent', 'normal'].includes(main.name)
+      && main.args && main.args.length === 2) {
+    const built = buildTangent(obj, main, ctx);
+    if (built) return built;
+  }
+
+  // ── 정적분: integral(x^2, x, 0, 2) — 값만 내지 않고 넓이를 칠한다
+  if (main.type === 'call' && main.name === 'integral' && main.args
+      && (main.args.length === 3 || main.args.length === 4)) {
+    const built = buildIntegral(obj, main, ctx);
+    if (built) return built;
+  }
+
   const vars = freeVars(main);
   vars.delete('and'); vars.delete('or');
   const known = new Set([...ctx.defs.keys(), ...ctx.seqs.keys()]);
@@ -710,6 +724,90 @@ function buildRegression(obj, main, ctx) {
   return obj;
 }
 
+// ── 미적분 ──────────────────────────────────────────────────
+/** 식 안의 변수 v 를 다른 식으로 바꿔 끼운다 */
+function substAst(node, v, repl) {
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return n;
+    if (n.type === 'var' && n.name === v) return repl;
+    const out = { ...n };
+    for (const k of ['a', 'b']) if (n[k] && n[k].type) out[k] = walk(n[k]);
+    if (Array.isArray(n.args)) out.args = n.args.map(walk);
+    if (Array.isArray(n.items)) out.items = n.items.map(walk);
+    if (Array.isArray(n.cases)) {
+      out.cases = n.cases.map((c) => ({ cond: walk(c.cond), value: walk(c.value) }));
+      out.otherwise = walk(n.otherwise);
+    }
+    return out;
+  };
+  return walk(node);
+}
+
+const NUM = (v) => ({ type: 'num', value: v });
+const BIN = (op, a, b) => ({ type: 'bin', op, a, b });
+
+/**
+ * 접선·법선.
+ * 값을 그때그때 숫자로 굳히지 않고 **식으로** 세운다. 그래야 슬라이더를 움직이면
+ * 접선도 따라 움직인다.  y = f′(a)·(x − a) + f(a)
+ */
+function buildTangent(obj, main, ctx) {
+  const [target, atAst] = main.args;
+  let body = target;
+  let v = 'x';
+  // tangent(f, 1) 처럼 이름만 주면 그 함수의 본체를 꺼내 쓴다
+  const named = (target.type === 'var' || target.type === 'call') && ctx.defs.get(target.name);
+  if (named && named.params.length === 1) {
+    body = named.body;
+    v = named.params[0];
+  }
+
+  const d1 = derivative(body, v);
+  if (!d1) {
+    obj.kind = 'error';
+    obj.error = '이 식은 미분할 수 없어 접선을 그릴 수 없습니다.';
+    return obj;
+  }
+  const y0 = substAst(body, v, atAst);
+  const m0 = substAst(d1, v, atAst);
+  const isTangent = main.name === 'tangent';
+  const slope = isTangent ? m0 : BIN('/', NUM(-1), m0);
+  const lineAst = BIN('+', BIN('*', slope, BIN('-', { type: 'var', name: 'x' }, atAst)), y0);
+
+  obj.kind = 'tangent';
+  obj.varName = 'x';
+  obj.expr = lineAst;
+  obj.fn = compile(lineAst, ctx);
+  obj.slopeFn = compile(slope, ctx);
+  obj.atFn = compile(atAst, ctx);
+  obj.yFn = compile(y0, ctx);
+  obj.tangentKind = isTangent ? '접선' : '법선';
+  obj.baseLabel = format(body);
+  obj.label = `${obj.tangentKind}: ${format(body)} 의 ${v} = ${format(atAst)} 에서`;
+  return obj;
+}
+
+/** 정적분 — 값과 함께 넓이를 칠한다 */
+function buildIntegral(obj, main, ctx) {
+  const a = main.args;
+  const hasVar = a.length === 4;
+  const v = hasVar && a[1].type === 'var' ? a[1].name : 'x';
+  const body = a[0];
+  if (freeVars(body).size && ![...freeVars(body)].every(
+    (n) => n === v || ctx.defs.has(n) || ctx.seqs.has(n))) return null;
+
+  obj.kind = 'integral';
+  obj.varName = v;
+  obj.expr = body;
+  obj.fn = compile(body, ctx);
+  obj.loFn = compile(a[hasVar ? 2 : 1], ctx);
+  obj.hiFn = compile(a[hasVar ? 3 : 2], ctx);
+  obj.valueFn = compile(main, ctx);
+  obj.value = obj.valueFn({});
+  obj.label = `∫ ${format(body)} d${v} = ${pretty(obj.value)}`;
+  return obj;
+}
+
 // ── 수열 ────────────────────────────────────────────────────
 function buildSequence(obj, asts, ctx) {
   const defs = asts.filter((a) => a.type === 'cmp' && a.op === '=' && a.a.type === 'index');
@@ -809,6 +907,50 @@ export function computeObject(obj, bounds, opts = {}) {
       }
       const r = sampleFunction(f, b.xmin, b.xmax, { ymin: b.ymin, ymax: b.ymax });
       return { polylines: r.polylines, points: [] };
+    }
+    case 'tangent': {
+      const x0 = obj.atFn({});
+      const y0 = obj.yFn({});
+      const m = obj.slopeFn({});
+      const pts = isFinite(x0) && isFinite(y0) ? [[x0, y0]] : [];
+      // f′(a) = 0 인 자리의 법선처럼 기울기가 무한하면 세로선이 된다
+      if (pts.length && !isFinite(m)) {
+        const eq = `x = ${pretty(x0)}`;
+        return {
+          polylines: [[x0, b.ymin, x0, b.ymax]], points: pts, isolated: pts,
+          labels: [{ x: x0, y: y0, text: eq }], equation: eq, slope: Infinity, at: x0,
+        };
+      }
+      const f = (x) => obj.fn({ x });
+      const r = sampleFunction(f, b.xmin, b.xmax, { ymin: b.ymin, ymax: b.ymax });
+      const eq = isFinite(m) && isFinite(y0)
+        ? `y = ${coefLine(m, x0, y0)}` : '기울기를 구할 수 없습니다';
+      return {
+        polylines: r.polylines, points: pts, isolated: pts,
+        labels: pts.length ? [{ x: x0, y: y0, text: eq }] : [],
+        equation: eq, slope: m, at: x0,
+      };
+    }
+    case 'integral': {
+      const lo = obj.loFn({});
+      const hi = obj.hiFn({});
+      const v = obj.varName;
+      const f = (t) => obj.fn({ [v]: t });
+      if (!isFinite(lo) || !isFinite(hi)) return { polylines: [], points: [] };
+      const [a0, b0] = lo <= hi ? [lo, hi] : [hi, lo];
+      const r = sampleFunction(f, a0, b0, { ymin: b.ymin, ymax: b.ymax });
+      // 곡선과 x 축 사이를 닫아 다각형으로 만든다
+      const fills = r.polylines.map((line) => {
+        const poly = [line[0], 0, ...line, line[line.length - 2], 0];
+        return poly;
+      });
+      const value = obj.valueFn({});
+      const mid = (a0 + b0) / 2;
+      return {
+        polylines: r.polylines, points: [], areaFill: fills,
+        labels: [{ x: mid, y: f(mid) / 2, text: `${pretty(value)}` }],
+        value,
+      };
     }
     case 'functionY': {
       const r = sampleFunction((y) => obj.fn({ y }), b.ymin, b.ymax, { ymin: b.xmin, ymax: b.xmax });
@@ -958,6 +1100,44 @@ export function computeObject(obj, bounds, opts = {}) {
     default:
       return { polylines: [], points: [] };
   }
+}
+
+/** |f| 의 적분 — 부호 있는 넓이와 견주기 위한 것 */
+function adaptiveAbsArea(obj, lo, hi) {
+  if (!isFinite(lo) || !isFinite(hi) || lo === hi) return null;
+  const v = obj.varName;
+  const N = 2000;
+  const h = (hi - lo) / N;
+  let s = 0;
+  for (let i = 0; i < N; i++) {
+    const a = Math.abs(obj.fn({ [v]: lo + i * h }));
+    const m = Math.abs(obj.fn({ [v]: lo + (i + 0.5) * h }));
+    const b = Math.abs(obj.fn({ [v]: lo + (i + 1) * h }));
+    if (!isFinite(a) || !isFinite(m) || !isFinite(b)) return null;
+    s += ((a + 4 * m + b) * h) / 6;
+  }
+  return Math.abs(s);
+}
+
+/** y = m(x − x0) + y0 를 정리해 적는다 */
+function coefLine(m, x0, y0) {
+  const b = y0 - m * x0;
+  if (Math.abs(m) < 1e-12) return pretty(y0);
+  if (Math.abs(b) < 1e-12) return coefX(m);
+  return `${coefX(m)} ${b < 0 ? '-' : '+'} ${pretty(Math.abs(b))}`;
+}
+
+/** m·x 를 적는다. 분수는 -1/2x 가 아니라 -x/2 로 — 앞의 것은 -1/(2x) 로 읽힌다 */
+function coefX(m) {
+  if (Math.abs(m - 1) < 1e-12) return 'x';
+  if (Math.abs(m + 1) < 1e-12) return '-x';
+  const t = pretty(m);
+  const slash = t.indexOf('/');
+  if (slash < 0) return `${t}x`;
+  const p = t.slice(0, slash);
+  const q = t.slice(slash + 1);
+  const head = p === '1' ? 'x' : p === '-1' ? '-x' : `${p}x`;
+  return `${head}/${q}`;
 }
 
 /** 매개변수 표본화 옵션: 화면 크기로 정밀도를, 매개변수 폭으로 표본 수를 정한다 */
@@ -1163,6 +1343,42 @@ export function analyzeObject(obj, bounds, ctx) {
         const r = analyzeSequence(terms.filter(isFinite), { n0: obj.n0, name: obj.name || 'a' });
         return { title: '수열 분석', ...r,
           lead: `${(obj.name || 'a')}_${obj.n0} 부터: ${terms.slice(0, 10).map((v) => pretty(v)).join(', ')}${terms.length > 10 ? ' …' : ''}` };
+      }
+      case 'tangent': {
+        const d = computeObject(obj, bounds);
+        const findings = [{
+          type: 'line', title: `${obj.tangentKind}의 방정식`, confidence: 1,
+          detail: d.equation, formula: d.equation,
+        }];
+        if (isFinite(d.slope)) {
+          findings.push({ type: 'slope', title: '기울기', confidence: 1,
+            detail: `${pretty(d.slope)}${obj.tangentKind === '접선' ? ` — 그 점에서의 순간변화율입니다.` : ''}` });
+        }
+        if (d.points.length) {
+          findings.push({ type: 'point', title: '닿는 점', confidence: 1,
+            detail: `(${pretty(d.points[0][0])}, ${pretty(d.points[0][1])})`, points: d.points });
+        }
+        return { title: `${obj.tangentKind} 분석`, findings, summary: d.equation };
+      }
+      case 'integral': {
+        const d = computeObject(obj, bounds);
+        const lo = obj.loFn({});
+        const hi = obj.hiFn({});
+        const findings = [{
+          type: 'value', title: '정적분 값', confidence: 1,
+          detail: `∫ 의 값은 ${pretty(d.value)} 입니다.`,
+          formula: `∫[${pretty(lo)}, ${pretty(hi)}] ${format(obj.expr)} d${obj.varName} = ${pretty(d.value)}`,
+        }];
+        // 부호 있는 넓이와 실제 넓이는 다르다
+        const abs = adaptiveAbsArea(obj, lo, hi);
+        if (abs !== null && Math.abs(abs - Math.abs(d.value)) > Math.abs(abs) * 1e-6) {
+          findings.push({
+            type: 'signed', title: '축 아래 부분이 있습니다', confidence: 1,
+            detail: `부호를 무시한 넓이는 약 ${trimNum(abs, 6)} 입니다. `
+              + '정적분은 축 아래를 음수로 세므로 둘이 다릅니다.',
+          });
+        }
+        return { title: '정적분 분석', findings, summary: `${pretty(d.value)}` };
       }
       case 'region': return analyzeRegion(obj, bounds);
       case 'parametric':

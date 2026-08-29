@@ -74,6 +74,8 @@ class App {
     if (!this.restore()) START.forEach((s) => this.addObject(s));
     this.applyTheme();
     this.pushHistory();
+    // 먼저 한 번 풀어 두어야 목록에 "접선: y = 9x − 16" 같은 계산 결과가 함께 나온다
+    this.compute();
     this.renderInputs();
     this.buildExamples();
     this.schedule();
@@ -260,6 +262,7 @@ class App {
       const d = o.data;
       const st = o.style || defaultStyle(o.color);
       if (d.mask) r.drawMask(d.mask, st.color, b);
+      if (d.areaFill && d.areaFill.length) r.drawArea(d.areaFill, st.color);
       if (d.polylines && d.polylines.length) {
         const dash = d.dash || (d.ghost ? [4, 4] : DASHES[st.dash] || null);
         r.drawPolylines(d.polylines, st.color, d.ghost ? 1.2 : st.width, dash, st.opacity);
@@ -275,13 +278,15 @@ class App {
         const many = d.points.length > 400;
         r.drawPoints(d.points, st.color, many ? 2.4 : st.pointSize,
           { style: st.pointStyle, opacity: st.opacity });
-        if (!many && d.points.length <= 10 && o.kind !== 'sequence') {
+        if (!many && d.points.length <= 10 && o.kind !== 'sequence' && !d.labels) {
           r.drawLabels(
             d.points.map(([x, y]) => ({ x, y, text: `(${pretty(x)}, ${pretty(y)})` })),
             st.color,
           );
         }
       }
+      // 접선의 방정식, 정적분의 값처럼 그림 위에 직접 적어 주는 글
+      if (d.labels && d.labels.length) r.drawLabels(d.labels, st.color);
     }
 
     if (this.showIntersections && this.intersections.length) {
@@ -456,6 +461,10 @@ class App {
         }
         if (o.kind === 'value' || o.kind === 'constant') {
           meta.innerHTML += `<span class="tag pt">${escapeHtml(o.label)}</span>`;
+        }
+        if (d && d.equation) meta.innerHTML += `<span class="tag pt">${escapeHtml(d.equation)}</span>`;
+        if (d && d.value !== undefined && o.kind === 'integral') {
+          meta.innerHTML += `<span class="tag pt">= ${escapeHtml(pretty(d.value))}</span>`;
         }
         row.append(meta);
         // 입력한 식을 수학처럼 보이게 다시 그려 준다 (분수는 쌓고, 지수는 위로)
@@ -1293,6 +1302,7 @@ const KIND_LABEL = {
   function: '함수', functionY: 'x=f(y)', implicit: '음함수', region: '영역',
   system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
   sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
+  tangent: '접선·법선', integral: '정적분',
   union: '합집합', list: '리스트', regression: '회귀', pointseq: '점열',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
 };

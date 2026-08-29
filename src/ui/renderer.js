@@ -217,6 +217,25 @@ export class Renderer {
   /** 프레임마다 라벨 배치를 초기화한다 */
   beginFrame() { this._placedLabels = []; }
 
+  /** 곡선과 x 축 사이를 반투명하게 칠한다 (정적분) */
+  drawArea(polys, color) {
+    const { ctx, view } = this;
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (const poly of polys) {
+      if (poly.length < 6) continue;
+      ctx.moveTo(view.toPxX(poly[0]), view.toPxY(poly[1]));
+      for (let i = 2; i < poly.length; i += 2) {
+        ctx.lineTo(view.toPxX(poly[i]), view.toPxY(poly[i + 1]));
+      }
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.restore();
+  }
+
   /** 부등식 영역을 반투명하게 칠한다 */
   drawMask(maskInfo, color, bounds) {
     const { ctx, view } = this;
