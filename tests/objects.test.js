@@ -258,3 +258,20 @@ test('적은 자릿수가 실제 정확도를 넘지 않는다', () => {
       `${src}: ${shown} 은 소수 ${dec}자리까지 맞다고 하기 어렵다 (참값 ${truth})`);
   }
 });
+
+test('등고선이 "가지 115개" 라 하던 식을 곡선족으로 읽는다', () => {
+  const ctx = createContext();
+  const o = make('sin(x y) = 0', ctx);
+  const f = analyzeObject(o, B, ctx).findings.find((x) => x.type === 'level-family');
+  assert.ok(f, '곡선족을 알아보지 못함');
+  assert.match(f.title, /x·y = kπ/);
+  assert.match(f.detail, /쌍곡선/);
+  assert.match(f.detail, /퇴화/);         // x y = 0 은 두 직선
+});
+
+test('가질 수 없는 값이면 곡선족 대신 해 없음', () => {
+  const ctx = createContext();
+  const o = make('sin(x + y) = 2', ctx);
+  const f = analyzeObject(o, B, ctx).findings.find((x) => x.type === 'level-family');
+  assert.equal(f.title, '해 없음');
+});

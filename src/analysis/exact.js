@@ -398,6 +398,95 @@ const trimP = (a) => {
   return out;
 };
 
+// ── 주기함수가 만드는 곡선족 ────────────────────────────
+/**
+ * sin(u) = c 처럼 **주기함수 안에 다항식이 든** 식은 다항식이 아니어서 기호 층이
+ * 손을 놓았다. 그런데 이런 식의 해집합은 `u = v_k` 라는 **곡선족**이다.
+ *
+ *   sin(x y) = 0  →  x y = kπ  (k 는 정수)  →  직각쌍곡선의 무리, k = 0 은 두 직선
+ *
+ * 등고선 알고리즘은 "가지 115개" 라고만 말하지만, 실제 답은 이 한 줄이다.
+ *
+ * @returns {{u:Poly, fn:string, levels:number[], levelText:string,
+ *            period:number, kind:string, degenerateAt:Rat|null}|null}
+ */
+export function levelFamily(node, vars, consts = new Map()) {
+  if (!node || node.type !== 'cmp' || node.op !== '=') return null;
+  for (const [call, other] of [[node.a, node.b], [node.b, node.a]]) {
+    if (!call || call.type !== 'call' || !call.args || call.args.length !== 1) continue;
+    if (!['sin', 'cos', 'tan'].includes(call.name)) continue;
+    const u = toPoly(call.args[0], vars, consts);
+    if (!u || u.degree < 1) continue;
+    const rhs = toPoly(other, [], consts);
+    if (!rhs) continue;
+    const c = rhs.isZero ? 0 : rhs.coeff([]).value;
+    const sol = trigLevels(call.name, c);
+    if (!sol) continue;
+
+    if (!sol.bases.length) return { u, fn: call.name, c, kind: null, degenerateAt: null, ...sol };
+    const k = u.degree === 1 ? null : conicCoeffs(u.degree <= 2 ? u : null);
+    let kind = u.degree === 1 ? '직선' : null;
+    let degenerateAt = null;
+    if (k) {
+      const disc = k.B.mul(k.B).sub(k.A.mul(k.C).mul(Rat.of(4)));
+      kind = disc.isZero ? '포물선' : disc.sign < 0 ? (k.B.isZero && k.A.eq(k.C) ? '원' : '타원') : '쌍곡선';
+      // 3×3 행렬식은 상수항에 대해 일차이므로, 퇴화하는 높이를 정확히 풀 수 있다
+      const two = Rat.of(2);
+      const b2 = k.B.div(two), d2 = k.D.div(two), e2 = k.E.div(two);
+      const slope = k.A.mul(k.C).sub(b2.mul(b2));                       // 행렬식의 F 계수
+      const at0 = k.A.mul(e2.mul(e2).neg())
+        .sub(b2.mul(e2.mul(d2).neg()))
+        .add(d2.mul(b2.mul(e2).sub(k.C.mul(d2))));                      // F = 0 일 때의 값
+      if (!slope.isZero) degenerateAt = k.F.add(at0.div(slope));        // u 가 이 값일 때 퇴화
+    }
+    return { u, fn: call.name, c, kind, degenerateAt, ...sol };
+  }
+  return null;
+}
+
+/** F(u) = c 를 u 에 대해 풀어 "기준값 + kT" 꼴로 */
+function trigLevels(fn, c) {
+  const P = Math.PI;
+  const T = (x) => piText(x);
+  if (fn === 'tan') {
+    const a = Math.atan(c);
+    return { bases: [a], period: P, levelText: `${T(a)}${a ? ' + ' : ''}kπ`.replace(/^0 \+ /, '') };
+  }
+  if (fn === 'sin') {
+    if (Math.abs(c) > 1) return { bases: [], period: P, levelText: '해 없음' };
+    const a = Math.asin(c);
+    if (Math.abs(c) < 1e-15) return { bases: [0], period: P, levelText: 'kπ' };
+    if (Math.abs(Math.abs(c) - 1) < 1e-15) {
+      return { bases: [a], period: 2 * P, levelText: `${T(a)} + 2kπ` };
+    }
+    return { bases: [a, P - a], period: 2 * P, levelText: `${T(a)} + 2kπ 또는 ${T(P - a)} + 2kπ` };
+  }
+  // cos
+  if (Math.abs(c) > 1) return { bases: [], period: P, levelText: '해 없음' };
+  const a = Math.acos(c);
+  if (Math.abs(c) < 1e-15) return { bases: [P / 2], period: P, levelText: 'π/2 + kπ' };
+  if (Math.abs(a) < 1e-15) return { bases: [0], period: 2 * P, levelText: '2kπ' };
+  if (Math.abs(a - P) < 1e-15) return { bases: [P], period: 2 * P, levelText: 'π + 2kπ' };
+  return { bases: [a, -a], period: 2 * P, levelText: `±${T(a)} + 2kπ` };
+}
+
+/**
+ * π 의 배수면 π 로 적는다.
+ * asin(1/2)/π 는 부동소수에서 1/6 과 한 ulp 어긋나므로 딱 맞기를 요구하면 안 된다.
+ */
+function piText(v) {
+  if (Math.abs(v) < 1e-15) return '0';
+  const t = v / Math.PI;
+  for (let d = 1; d <= 12; d++) {
+    const n = Math.round(t * d);
+    if (n !== 0 && Math.abs(t - n / d) < 1e-12) {
+      const head = n === 1 ? '' : n === -1 ? '-' : String(n);
+      return d === 1 ? `${head}π` : `${head}π/${d}`;
+    }
+  }
+  return trimNum(v, 4);
+}
+
 // ── 곡선족이 특이해지는 자리 ────────────────────────────
 /**
  * f(x, y; a) = 0 이 그리는 곡선의 **모양이 바뀌는** 파라미터 값.

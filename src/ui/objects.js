@@ -13,7 +13,7 @@ import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeCurve } from '../analysis/curve.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
 import { fitConic } from '../analysis/conic.js';
-import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions, singularTransitions } from '../analysis/exact.js';
+import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions, singularTransitions, levelFamily } from '../analysis/exact.js';
 import { toPoly } from '../math/poly.js';
 import { ratFromNumber } from '../math/rational.js';
 import { pretty, trimNum } from '../math/numeric.js';
@@ -1040,13 +1040,19 @@ function residualOf(o) {
 export function analyzeObject(obj, bounds, ctx) {
   try {
     if (obj.data && obj.data.empty) {
+      // 왜 비었는지 말할 수 있으면 말한다 — sin(x+y) = 2 는 화면을 넓혀도 소용없다
+      const fam = ctx && obj.exprAst && !polyOf(obj, ctx)
+        ? levelFamily(obj.exprAst, ['x', 'y'], exactConstants(ctx)) : null;
+      const why = fam && !fam.bases.length
+        ? levelFamilyFinding(fam, bounds)
+        : {
+          type: 'empty', title: '해 없음', confidence: 1,
+          detail: '식 자체에 실수해가 없거나, 해가 지금 화면 밖에 있습니다. 축소해서 다시 확인해 보세요.',
+        };
       return {
         title: '해집합 분석',
         lead: '보이는 범위 안에서는 이 식을 만족하는 점이 하나도 없습니다.',
-        findings: [{
-          type: 'empty', title: '해 없음', confidence: 1,
-          detail: '식 자체에 실수해가 없거나, 해가 지금 화면 밖에 있습니다. 축소해서 다시 확인해 보세요.',
-        }],
+        findings: [why],
         summary: '해 없음',
       };
     }
@@ -1283,6 +1289,51 @@ function signif(v, n) {
   return trimNum(v, Math.max(0, n - 1 - e));
 }
 
+/** sin(u) = c 꼴이 만드는 곡선족을 한 줄로 */
+function levelFamilyFinding(fam, bounds) {
+  const { u, levelText, kind, bases, period, degenerateAt } = fam;
+  const name = u.toString();
+  if (!bases.length) {
+    return { type: 'level-family', title: '해 없음', confidence: 1,
+      detail: `${fam.fn}(${name}) 은 이 값을 가질 수 없습니다.` };
+  }
+
+  // 보이는 범위에서 u 가 가지는 값의 폭 → 몇 번째 곡선까지 보이는지
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i <= 40; i++) {
+    for (let j = 0; j <= 40; j++) {
+      const v = u.evaluate({
+        x: bounds.xmin + ((bounds.xmax - bounds.xmin) * i) / 40,
+        y: bounds.ymin + ((bounds.ymax - bounds.ymin) * j) / 40,
+      });
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  let count = 0;
+  let degenerate = false;
+  for (const b of bases) {
+    const k0 = Math.ceil((lo - b) / period);
+    const k1 = Math.floor((hi - b) / period);
+    count += Math.max(0, k1 - k0 + 1);
+    if (degenerateAt) {
+      for (let k = k0; k <= k1 && k - k0 < 400; k++) {
+        if (Math.abs(b + k * period - degenerateAt.value) < 1e-9) degenerate = true;
+      }
+    }
+  }
+
+  let detail = `해집합은 ${name} = ${levelText} (k 는 정수) 를 만족하는 곡선들의 모임입니다.`;
+  if (kind) detail += ` 하나하나는 ${kind} 입니다.`;
+  if (degenerate) detail += ` 다만 ${name} = ${degenerateAt.toString()} 인 것은 퇴화합니다.`;
+  detail += ` 보이는 범위에는 ${count}개가 들어옵니다.`;
+  return {
+    type: 'level-family', title: `곡선족: ${name} = ${levelText}`, confidence: 1,
+    detail, formula: `${name} = ${levelText}`,
+    hint: '등고선 추적은 이런 식을 "가지 몇 개" 로만 셉니다. 식을 풀어 얻은 답입니다.',
+  };
+}
+
 /** 부등식 영역의 성질: 넓이·유계 여부·경계 곡선의 종류 */
 function analyzeRegion(obj, bounds) {
   const d = computeObject(obj, bounds);
@@ -1378,6 +1429,11 @@ function analyzeImplicit(obj, bounds, ctx) {
       detail: `x, y 에 대한 ${poly.degree}차 다항식입니다.`,
       formula: `${poly.toString()} = 0`,
     });
+  } else if (!poly && ctx && obj.exprAst) {
+    // sin(x y) = 0 처럼 주기함수 안에 다항식이 든 식은 다항식이 아니지만,
+    // 해집합은 x y = kπ 라는 **곡선족**이다. 등고선은 "가지 115개" 라고만 말한다.
+    const fam = levelFamily(obj.exprAst, ['x', 'y'], exactConstants(ctx));
+    if (fam) findings.push(levelFamilyFinding(fam, bounds));
   }
 
   if (nCurves && !exact) {

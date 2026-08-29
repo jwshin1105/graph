@@ -4,7 +4,7 @@ import { Rat, ratFromNumber } from '../src/math/rational.js';
 import { Poly, toPoly } from '../src/math/poly.js';
 import {
   classifyConicExact, conicCoeffs, conicEquation, conicTransitions,
-  familyTransitions, polyRootsExact, exactSqrt, singularTransitions,
+  familyTransitions, polyRootsExact, exactSqrt, singularTransitions, levelFamily,
 } from '../src/analysis/exact.js';
 import { parse } from '../src/math/parser.js';
 
@@ -207,4 +207,38 @@ test('늘 특이한 곡선은 특이점의 종류가 바뀌는 자리를 찾는�
 test('파라미터가 없거나 차수가 너무 높으면 손대지 않는다', () => {
   assert.equal(singularTransitions(P('y^2 = x^3 - x', ['x', 'y', 'a']), 'a'), null);
   assert.equal(sing('y^6 = x^6 + a'), null);
+});
+
+// ── 주기함수가 만드는 곡선족 ────────────────────────────
+const lf = (src) => levelFamily(parse(src), ['x', 'y']);
+
+test('sin(u) = c 는 곡선족이다', () => {
+  const r = lf('sin(x y) = 0');
+  assert.equal(r.u.toString(), 'x·y');
+  assert.equal(r.levelText, 'kπ');
+  assert.equal(r.kind, '쌍곡선');
+  assert.equal(r.degenerateAt.toString(), '0');      // x y = 0 은 두 직선으로 무너진다
+});
+
+test('기준값을 π 로 적는다', () => {
+  assert.equal(lf('cos(x^2+y^2) = 0').levelText, 'π/2 + kπ');
+  assert.equal(lf('tan(x + y) = 1').levelText, 'π/4 + kπ');
+  // asin(1/2)/π 는 부동소수에서 1/6 과 한 ulp 어긋난다 — 그래도 π/6 이라 적어야 한다
+  assert.match(lf('sin(x^2 - y^2) = 1/2').levelText, /π\/6 \+ 2kπ/);
+});
+
+test('곡선족의 종류도 정확히 가른다', () => {
+  assert.equal(lf('cos(x^2+y^2) = 0').kind, '원');
+  assert.equal(lf('tan(x + y) = 1').kind, '직선');
+  assert.equal(lf('sin(x^2 - y^2) = 1/2').kind, '쌍곡선');
+});
+
+test('가질 수 없는 값이면 해가 없다고 한다', () => {
+  assert.deepEqual(lf('sin(x + y) = 2').bases, []);
+});
+
+test('이 꼴이 아니면 손대지 않는다', () => {
+  assert.equal(lf('sin x + sin y = 0'), null);
+  assert.equal(lf('x^2 + y^2 = 1'), null);
+  assert.equal(lf('sin(3) = 0'), null);          // 안이 상수면 곡선이 아니다
 });
