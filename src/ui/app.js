@@ -459,9 +459,11 @@ class App {
         if (o.kind === 'regression') {
           meta.innerHTML += `<span class="tag pt">R² = ${o.r2.toFixed(5)}</span>`;
         }
-        if (o.kind === 'value' || o.kind === 'constant') {
+        if (o.kind === 'value' || o.kind === 'constant' || o.kind === 'setting') {
           meta.innerHTML += `<span class="tag pt">${escapeHtml(o.label)}</span>`;
         }
+        if (o.valueKind === 'exact') meta.innerHTML += '<span class="tag">정확값</span>';
+        else if (o.valueKind === 'big') meta.innerHTML += '<span class="tag">고정밀</span>';
         if (d && d.equation) meta.innerHTML += `<span class="tag pt">${escapeHtml(d.equation)}</span>`;
         if (d && d.value !== undefined && o.kind === 'integral') {
           meta.innerHTML += `<span class="tag pt">= ${escapeHtml(pretty(d.value))}</span>`;
@@ -1302,6 +1304,7 @@ const KIND_LABEL = {
   function: '함수', functionY: 'x=f(y)', implicit: '음함수', region: '영역',
   system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
   sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
+  setting: '설정',
   tangent: '접선·법선', integral: '정적분',
   union: '합집합', list: '리스트', regression: '회귀', pointseq: '점열',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',

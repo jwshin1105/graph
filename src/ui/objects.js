@@ -16,10 +16,14 @@ import { fitConic } from '../analysis/conic.js';
 import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions, singularTransitions, levelFamily } from '../analysis/exact.js';
 import { toPoly } from '../math/poly.js';
 import { ratFromNumber } from '../math/rational.js';
+import { toExact, evalBig, Exact } from '../math/exactval.js';
+import { internalDigits, displayDigits, setPrecision, getPrecision } from '../math/precision.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const ANGLE_VARS = new Set(['t', 'θ', 'theta']);
 const isBuiltin = (n) => Object.prototype.hasOwnProperty.call(FUNCTIONS, n);
+
+export const SETTING_NAMES = ['precision', 'digits'];
 
 export function createContext() {
   return makeContext();
@@ -27,7 +31,9 @@ export function createContext() {
 
 /** ctx 에 이미 정의된 이름들 (토크나이저가 통째로 인식하도록) */
 export function knownNames(ctx) {
-  return new Set([...ctx.defs.keys(), ...ctx.seqs.keys(), 'x', 'y', 'n', 'k', 't', 'r', 'θ', 'and', 'or']);
+  // 설정 이름은 한 낱말로 읽어야 한다. 모르는 이름이면 p·r·e·c·i·s·i·o·n 으로 쪼개진다.
+  return new Set([...ctx.defs.keys(), ...ctx.seqs.keys(), 'x', 'y', 'n', 'k', 't', 'r', 'θ',
+    'and', 'or', ...SETTING_NAMES]);
 }
 
 /**
@@ -149,6 +155,20 @@ function classify(obj, asts, ctx) {
       obj.kind = 'defined';
       obj.detail = '2변수 함수로 등록했습니다. f(x,y)=0 처럼 방정식으로 쓰면 그래프가 그려집니다.';
     }
+    return obj;
+  }
+
+  // ── 계산 정밀도 설정: precision = 50, digits = 20
+  if (main.type === 'cmp' && main.op === '=' && main.a.type === 'var'
+      && SETTING_NAMES.includes(main.a.name)) {
+    const n = Math.round(compile(main.b, ctx)({}));
+    const isDisplay = main.a.name === 'digits';
+    const p = setPrecision(isDisplay ? { display: n } : { internal: n });
+    obj.kind = 'setting';
+    obj.label = isDisplay
+      ? `화면에 ${p.display}자리까지 (내부 계산은 ${p.internal}자리)`
+      : `내부 계산 ${p.internal}자리 (화면은 ${p.display}자리)`;
+    obj.precision = p;
     return obj;
   }
 
@@ -414,10 +434,8 @@ function classify(obj, asts, ctx) {
 
   // ── 순수 식
   if (free.size === 0) {
-    const v = compile(main, ctx)({});
     obj.kind = 'value';
-    obj.value = v;
-    obj.label = `${format(main)} = ${pretty(v)}`;
+    evaluateValue(obj, main, ctx);
     return obj;
   }
   if (free.size === 1 && (free.has('x') || known.size >= 0)) {
@@ -551,6 +569,66 @@ export function stripRestriction(node) {
   };
   const ast = walk(node);
   return { ast, restricted: found };
+}
+
+/**
+ * 값을 세 층으로 구한다.
+ *   1. 정확값 — 유리수·근호·π 를 그대로 (0.1+0.2 = 3/10, √2² = 2)
+ *   2. 고정밀 수치 — 정확값이 없으면 자릿수를 늘려 (sin 1 = 0.841470984807896506652…)
+ *   3. 배정밀도 — 그마저 안 되면 기존 계산기로
+ * 화면에는 표시 자릿수만큼만 적지만, 안에는 내부 자릿수만큼 남겨 둔다.
+ * 표시하려고 반올림한 값이 다음 계산에 흘러들지 않게 하려는 것이다.
+ */
+export function evaluateValue(obj, main, ctx) {
+  const consts = exactValueConstants(ctx);
+  const ip = internalDigits();
+  const dp = displayDigits();
+  let exact = null;
+  try { exact = toExact(main, consts); } catch { exact = null; }
+  const float = compile(main, ctx)({});
+  obj.value = float;
+  obj.exact = exact;
+
+  if (exact) {
+    const big = exact.toBig(ip);
+    obj.big = big;
+    obj.value = big ? big.toNumber() : float;
+    obj.exactText = exact.toString();
+    obj.approxText = big ? big.toString(dp) : pretty(float);
+    // 정수는 근삿값을 덧붙이지 않는다 (2^100 ≈ 1.27e30 은 알려 줄 것이 없다)
+    const r = exact.asRat;
+    const same = obj.exactText === obj.approxText || (r && r.isInt);
+    obj.label = `${format(main)} = ${obj.exactText}${same ? '' : `  ≈ ${obj.approxText}`}`;
+    obj.valueKind = 'exact';
+    return obj;
+  }
+
+  let big = null;
+  try { big = evalBig(main, consts, ip); } catch { big = null; }
+  if (big) {
+    obj.big = big;
+    obj.value = big.toNumber();
+    obj.approxText = big.toString(dp);
+    obj.label = `${format(main)} = ${obj.approxText}`;
+    obj.valueKind = 'big';
+    return obj;
+  }
+  obj.approxText = pretty(float);
+  obj.label = `${format(main)} = ${obj.approxText}`;
+  obj.valueKind = 'float';
+  return obj;
+}
+
+/** 이름 → 정확값 (정확값 계산에 넘기기 위해) */
+export function exactValueConstants(ctx) {
+  const out = new Map();
+  for (const [name, def] of ctx.defs) {
+    if (def.params.length !== 0 || !def.body) continue;
+    let v = null;
+    try { v = toExact(def.body, out); } catch { v = null; }
+    if (v) out.set(name, v);
+  }
+  return out;
 }
 
 /** 값이 정해진 이름들을 정확한 유리수로 (기호 계산에 넘기기 위해) */

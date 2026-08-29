@@ -31,7 +31,7 @@ export function tokenize(src, knownNames = new Set()) {
   ]);
   const tokens = [];
   let i = 0;
-  const push = (type, value, pos) => tokens.push({ type, value, pos });
+  const push = (type, value, pos, text) => tokens.push({ type, value, pos, text });
 
   while (i < src.length) {
     const c = src[i];
@@ -50,7 +50,8 @@ export function tokenize(src, knownNames = new Set()) {
         if (src[k] === '+' || src[k] === '-') k++;
         if (DIGIT.test(src[k] || '')) { k++; while (k < src.length && DIGIT.test(src[k])) k++; j = k; }
       }
-      push('num', parseFloat(src.slice(i, j)), i);
+      // 적은 글자 그대로도 남겨 둔다 — 0.1 을 배정밀도로 바꾸면 1/10 이 아니게 된다
+      push('num', parseFloat(src.slice(i, j)), i, src.slice(i, j));
       i = j;
       continue;
     }
@@ -349,7 +350,7 @@ class Parser {
 
   parsePrimary() {
     const tk = this.peek();
-    if (tk.type === 'num') { this.next(); return num(tk.value); }
+    if (tk.type === 'num') { this.next(); return { type: 'num', value: tk.value, text: tk.text }; }
 
     if (tk.type === 'punct' && tk.value === '(') {
       this.next();
