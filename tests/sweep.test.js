@@ -113,15 +113,31 @@ test('객체 하나의 서명', () => {
   assert.equal(objectSignature(empty, B, computeObject).label, '해 없음');
 });
 
-test('곡선에 붙은 고립해가 생기는 지점도 찾는다', () => {
-  // y² = x²(x−a) 의 원점은 a > 0 에서 고립해가 된다.
-  // 참값은 a = 0 이지만 격자 해상도가 한계라, 찾은 값에 (근사) 표시가 붙어야 한다.
+test('곡선에 붙은 고립해가 생기는 지점을 기호로 짚는다', () => {
+  // y² = x²(x−a) 의 원점은 늘 특이점이지만, a 의 부호에 따라
+  // 매듭점이었다가 고립점이 된다. 격자로는 a ≈ 0.0004 로만 잡히던 자리다.
   const r = run(['a = 0', 'y^2 = x^2 (x - a)'], 'a', -2, 2);
   assert.equal(r.transitions.length, 1);
-  assert.ok(r.transitions[0].at > 0 && r.transitions[0].at < 0.1,
-    `분기점 ${r.transitions[0].at}`);
-  assert.equal(r.transitions[0].approx, true);
+  assert.equal(r.transitions[0].at, 0);
+  assert.equal(r.transitions[0].approx, false);
+  assert.match(r.transitions[0].reason, /헤세 행렬식/);
   assert.match(r.transitions[0].after.label, /고립해/);
+});
+
+test('가지가 갈라지는 자리도 기호로 짚는다', () => {
+  // y² = x³ − a x 는 a = 0 에서 첨점이 되며 가지가 1개 ↔ 2개로 갈린다
+  const r = run(['a = 0', 'y^2 = x^3 - a x'], 'a', -2, 2);
+  assert.equal(r.transitions.length, 1);
+  assert.equal(r.transitions[0].at, 0);
+  assert.match(r.transitions[0].reason, /f_x = f_y = 0/);
+});
+
+test('3차 이상인 식을 표본에 맞춰 이차곡선이라 부르지 않는다', () => {
+  // 데카르트의 잎 x³+y³ = a x y 를 "두 평행선" 이라 하고 있었다
+  const r = run(['a = 1', 'x^3 + y^3 = a x y'], 'a', -2, 2);
+  for (const st of r.stages) {
+    assert.doesNotMatch(st.sig.label, /직선|평행|타원|쌍곡선|포물선/, st.sig.label);
+  }
 });
 
 test('훑기 결과는 실행할 때마다 같다', () => {

@@ -4,7 +4,7 @@ import { Rat, ratFromNumber } from '../src/math/rational.js';
 import { Poly, toPoly } from '../src/math/poly.js';
 import {
   classifyConicExact, conicCoeffs, conicEquation, conicTransitions,
-  familyTransitions, polyRootsExact, exactSqrt,
+  familyTransitions, polyRootsExact, exactSqrt, singularTransitions,
 } from '../src/analysis/exact.js';
 import { parse } from '../src/math/parser.js';
 
@@ -183,4 +183,28 @@ test('Poly 는 변수 순서를 지킨다', () => {
   const p = Poly.variable(['x', 'y'], 'y');
   assert.equal(p.coeff([0, 1]).toString(), '1');
   assert.throws(() => Poly.variable(['x'], 'z'));
+});
+
+// ── 곡선족이 특이해지는 자리 ────────────────────────────
+const sing = (src) => singularTransitions(P(src, ['x', 'y', 'a']), 'a');
+
+test('가지가 갈라지는 자리 — f = f_x = f_y = 0 을 종결식으로 푼다', () => {
+  assert.deepEqual(at(sing('y^2 = x^3 - a x')), ['0']);
+  assert.deepEqual(at(sing('y^2 = x^3 + a')), ['0']);
+  assert.deepEqual(at(sing('y^2 = (x-a)(x^2-1)')), ['-1', '1']);
+  assert.match(sing('y^2 = x^3 - a x')[0].reason, /특이해지는/);
+});
+
+test('늘 특이한 곡선은 특이점의 종류가 바뀌는 자리를 찾는다', () => {
+  // y² = x²(x−a) 의 원점은 늘 특이점 — a 의 부호에 따라 매듭점 ↔ 고립점
+  const r = sing('y^2 = x^2 (x - a)');
+  assert.deepEqual(at(r), ['0']);
+  assert.match(r[0].reason, /헤세 행렬식/);
+  // 데카르트의 잎도 원점이 늘 특이점이다
+  assert.deepEqual(at(sing('x^3 + y^3 = a x y')), ['0']);
+});
+
+test('파라미터가 없거나 차수가 너무 높으면 손대지 않는다', () => {
+  assert.equal(singularTransitions(P('y^2 = x^3 - x', ['x', 'y', 'a']), 'a'), null);
+  assert.equal(sing('y^6 = x^6 + a'), null);
 });

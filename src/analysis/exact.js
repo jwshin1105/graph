@@ -5,7 +5,7 @@
 //   · 파라미터가 든 이차곡선의 분기점 — 훑지 않고 방정식을 풀어서 바로
 
 import { Rat, ratFromNumber } from '../math/rational.js';
-import { toPoly } from '../math/poly.js';
+import { Poly, toPoly } from '../math/poly.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 /** 이차곡선 계수 A x² + B xy + C y² + D x + E y + F */
@@ -398,14 +398,166 @@ const trimP = (a) => {
   return out;
 };
 
+// ── 곡선족이 특이해지는 자리 ────────────────────────────
 /**
- * 두 다항식의 종결식. 계수가 param 의 다항식이므로 실베스터 행렬의 행렬식을
- * ℚ[param] 위에서 그대로 전개한다 (나눗셈이 없어 정확하다).
+ * f(x, y; a) = 0 이 그리는 곡선의 **모양이 바뀌는** 파라미터 값.
+ *
+ * 이차곡선이 아니면 판별식이 없다. 대신 곡선이 매끄럽지 않게 되는 순간을 찾는다 —
+ * 가지가 갈라지거나 붙거나, 고립점이 떨어져 나오는 일은 모두 거기서 일어난다.
+ * 조건은 f = f_x = f_y = 0 이 함께 풀리는 것이고, x 와 y 를 종결식으로 차례로
+ * 소거하면 a 만 남는 방정식이 된다.
+ *
+ *   y² = x³ − a x  →  a = 0 에서 첨점(cusp), 가지 1개 ↔ 2개
+ *
+ * 모든 a 에서 특이한 곡선도 있다. y² = x²(x − a) 의 원점은 늘 특이점이지만
+ * a 의 부호에 따라 **매듭점**이었다가 **고립점**이 된다. 이때는 소거식이
+ * 항등적으로 0 이 되므로, 고정된 특이점을 찾아 그 자리의 헤세 행렬식이
+ * 0 이 되는 a 를 구한다.
+ *
+ * @returns {{at:number, text:string, reason:string}[]|null}
  */
-function resultantP(A, B) {
+export function singularTransitions(poly, param) {
+  if (!poly || !poly.vars.includes(param)) return null;
+  const others = poly.vars.filter((v) => v !== param);
+  if (others.length !== 2) return null;
+  const [vx, vy] = others;
+  const deg = poly.degree;
+  if (!(deg >= 2) || deg > 5) return null;
+  if (poly.degreeIn(param) < 1) return null;
+
+  const R = ringPoly(poly.vars);
+  const fx = poly.derivative(vx);
+  const fy = poly.derivative(vy);
+  const inY = (p) => coeffsIn(p, vy);
+  const inX = (p) => coeffsIn(p, vx);
+
+  const g1 = resultantP(inY(poly), inY(fy), R);
+  const g2 = resultantP(inY(poly), inY(fx), R);
+  const events = [];
+  const push = (uni, reason) => {
+    if (!uni) return;
+    const rs = polyRootsExact(uni);
+    if (!rs || rs.partial) return;
+    for (const r of rs) events.push({ at: r.value, text: r.text, reason });
+  };
+
+  let handled = false;
+  if (g1 && g2 && !g1.isZero && !g2.isZero) {
+    const D = resultantP(inX(g1), inX(g2), R);
+    if (D && !D.isZero) {
+      const uni = D.toUnivariate(param, {});
+      if (uni && uni.length > 1) {
+        push(uni, '곡선이 특이해지는 자리 (f = f_x = f_y = 0)');
+        handled = true;
+      }
+    }
+  }
+
+  if (!handled) {
+    // 늘 특이한 곡선 — 특이점의 **종류**가 바뀌는 자리를 찾는다
+    const p0 = fixedSingularPoint(poly, fx, fy, param, vx, vy);
+    if (p0) {
+      const H = poly.derivative(vx).derivative(vx).mul(poly.derivative(vy).derivative(vy))
+        .sub(fx.derivative(vy).mul(fx.derivative(vy)));
+      const at = H.substitute({ [vx]: p0[0], [vy]: p0[1] });
+      const uni = at.toUnivariate(param, {});
+      if (uni && uni.length > 1) {
+        push(uni, `특이점 (${p0[0].toString()}, ${p0[1].toString()}) 의 종류가 바뀌는 자리 `
+          + '(헤세 행렬식 = 0 — 매듭점 ↔ 고립점)');
+      }
+    }
+  }
+  return events.length ? dedupeEvents(events) : null;
+}
+
+/** v 에 대한 계수 배열 (낮은 차수부터). 각 계수는 다시 다항식이다 */
+function coeffsIn(p, v) {
+  const i = p.vars.indexOf(v);
+  const out = [];
+  for (const [key, val] of p.terms) {
+    const e = key.split(',').map(Number);
+    const d = e[i];
+    const rest = e.slice();
+    rest[i] = 0;
+    while (out.length <= d) out.push(Poly.zero(p.vars));
+    const cur = out[d];
+    const add = new Poly(p.vars, new Map([[rest.join(','), val]]));
+    out[d] = cur.add(add);
+  }
+  while (out.length && out[out.length - 1].isZero) out.pop();
+  return out;
+}
+
+/**
+ * a 값과 상관없이 늘 특이점인 자리.
+ * f, f_x, f_y 를 a 의 다항식으로 보고 **모든 계수가 함께 0** 이 되는 (x, y) 를 찾는다.
+ * 교과서에 나오는 곡선족은 그런 점이 원점처럼 유리수 자리에 있다.
+ */
+function fixedSingularPoint(f, fx, fy, param, vx, vy) {
+  const parts = [];
+  for (const p of [f, fx, fy]) for (const c of coeffsIn(p, param)) if (!c.isZero) parts.push(c);
+  if (!parts.length) return null;
+
+  const rootsOf = (v) => {
+    const other = v === vx ? vy : vx;
+    const cands = [];
+    for (const p of parts) {
+      if (p.degreeIn(other) > 0 || p.degreeIn(param) > 0) continue;
+      const uni = p.toUnivariate(v, {});
+      if (!uni || uni.length < 2) continue;
+      const rs = polyRootsExact(uni);
+      if (!rs || rs.partial) continue;
+      cands.push(rs.map((r) => ratFromNumber(r.value)).filter(Boolean));
+    }
+    if (!cands.length) return null;
+    // 여러 식이 함께 요구하는 값만 남긴다
+    return cands.reduce((acc, list) => acc.filter((r) => list.some((q) => q.eq(r))));
+  };
+
+  const xs = rootsOf(vx);
+  const ys = rootsOf(vy);
+  if (!xs || !ys) return null;
+  for (const x0 of xs) {
+    for (const y0 of ys) {
+      const env = { [vx]: x0, [vy]: y0 };
+      if (parts.every((p) => p.substitute(env).isZero)) return [x0, y0];
+    }
+  }
+  return null;
+}
+
+// 계수가 놓인 고리(ring)를 바꿔 끼울 수 있게 해 둔다.
+// 파라미터 하나짜리 종결식은 ℚ[a] 위에서, 곡선의 특이점을 찾을 때는
+// ℚ[x, y, a] 위에서 같은 행렬식을 쓴다.
+const RING_P = {          // 계수 배열 (ℚ[a])
+  one: [Rat.ONE],
+  add: (a, b) => addP(a, b),
+  mul: (a, b) => mulP(a, b),
+  neg: (a) => a.map((v) => v.neg()),
+  isZero: (a) => !a || !a.length,
+};
+const ringPoly = (vars) => ({      // 다변수 다항식 (ℚ[x, y, a])
+  one: Poly.constant(vars, Rat.ONE),
+  add: (a, b) => a.add(b),
+  mul: (a, b) => a.mul(b),
+  neg: (a) => a.neg(),
+  isZero: (a) => !a || a.isZero,
+});
+
+/**
+ * 두 다항식의 종결식 — 실베스터 행렬의 행렬식을 고리 위에서 그대로 전개한다
+ * (나눗셈이 없어 정확하다).
+ * @param {Array} A 낮은 차수부터의 계수
+ * @param {Array} B
+ * @param {object} [R] 계수가 놓인 고리
+ */
+function resultantP(A, B, R = RING_P) {
   const m = A.length - 1;
   const n = B.length - 1;
-  if (m < 1 || n < 0) return null;
+  if (m < 0 || n < 0) return null;
+  // 한쪽이 상수면 Res(f, c) = c^deg f
+  if (n === 0) return powRing(B[0], m, R);
+  if (m === 0) return powRing(A[0], n, R);
   const size = m + n;
   if (size < 1 || size > 8) return null;
   const M = [];
@@ -419,31 +571,38 @@ function resultantP(A, B) {
     for (let k = 0; k <= n; k++) row[i + k] = B[n - k];
     M.push(row);
   }
-  return detP(M);
+  return detP(M, R);
 }
 
-/** ℚ[param] 성분 행렬의 행렬식 — 열 부분집합을 상태로 두고 라플라스 전개 */
-function detP(M) {
+function powRing(v, k, R) {
+  let r = R.one;
+  for (let i = 0; i < k; i++) r = R.mul(r, v);
+  return r;
+}
+
+/** 행렬식 — 열 부분집합을 상태로 두고 라플라스 전개 */
+function detP(M, R = RING_P) {
   const n = M.length;
-  let dp = new Map([[0, [Rat.ONE]]]);
+  let dp = new Map([[0, R.one]]);
   for (let r = 0; r < n; r++) {
     const next = new Map();
     for (const [mask, val] of dp) {
       for (let c = 0; c < n; c++) {
         if (mask & (1 << c)) continue;
         const e = M[r][c];
-        if (!e || !e.length) continue;
+        if (R.isZero(e)) continue;
         let before = 0;
         for (let j = 0; j < c; j++) if (!(mask & (1 << j))) before++;
-        let term = mulP(val, e);
-        if (before % 2) term = term.map((v) => v.neg());
+        let term = R.mul(val, e);
+        if (before % 2) term = R.neg(term);
         const key = mask | (1 << c);
-        next.set(key, addP(next.get(key) || [], term));
+        const cur = next.get(key);
+        next.set(key, cur ? R.add(cur, term) : term);
       }
     }
     dp = next;
   }
-  return dp.get((1 << n) - 1) || [];
+  return dp.get((1 << n) - 1) || null;
 }
 
 /** 같은 파라미터 값에서 나온 사유를 하나로 묶는다 */

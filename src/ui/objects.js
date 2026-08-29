@@ -13,7 +13,7 @@ import { analyzePointSet } from '../analysis/pointset.js';
 import { analyzeCurve } from '../analysis/curve.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
 import { fitConic } from '../analysis/conic.js';
-import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions } from '../analysis/exact.js';
+import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, familyTransitions, singularTransitions } from '../analysis/exact.js';
 import { toPoly } from '../math/poly.js';
 import { ratFromNumber } from '../math/rational.js';
 import { pretty, trimNum } from '../math/numeric.js';
@@ -578,14 +578,21 @@ export function sweepHooks(objects, ctx, param) {
     }
     if (!o.exprAst) continue;
     const poly = toPoly(o.exprAst, ['x', 'y', param], consts);
-    const list = poly ? conicTransitions(poly, param) : null;
+    if (!poly) continue;
+    // 이차곡선이면 판별식으로, 그보다 높은 차수면 곡선이 특이해지는 자리로
+    const list = conicTransitions(poly, param) || singularTransitions(poly, param);
     if (list) exactAt.push(...list);
   }
+  // 종류를 문자열로 돌려준다. 다항식이지만 3차 이상이면 false —
+  // "모른다" 가 아니라 "이차곡선이 아님이 확실하다" 는 뜻이다.
+  // 그러지 않으면 데카르트의 잎 x³+y³=axy 를 표본에 맞춰 보고
+  // "두 평행선" 이라고 우기게 된다.
   const exactKind = (obj) => {
     const poly = polyOf(obj, ctx);
-    if (!poly || poly.degree > 2) return null;
+    if (!poly) return null;
+    if (poly.degree > 2) return false;
     const c = classifyConicExact(poly);
-    return c ? c.kind : null;
+    return c ? c.kind : false;
   };
   return { exactAt, exactKind };
 }

@@ -3,7 +3,7 @@
 // 식에서는 읽을 수 없고 그림에서만 보이는 것들이다. 심장형 r = 1+cos θ 가 닫힌
 // 곡선이라는 것, 그 둘레가 8 이고 넓이가 3π/2 라는 것은 계수만 봐서는 나오지 않는다.
 
-import { pretty, trimNum } from '../math/numeric.js';
+import { trimNum } from '../math/numeric.js';
 
 /**
  * @param {number[][]} polylines  [x0,y0,x1,y1,…] 꼴의 폴리라인 목록
@@ -13,7 +13,7 @@ import { pretty, trimNum } from '../math/numeric.js';
  */
 export function analyzeCurve(polylines, opts = {}) {
   const findings = [];
-  const lines = (polylines || []).filter((l) => l && l.length >= 4);
+  let lines = (polylines || []).filter((l) => l && l.length >= 4);
   if (!lines.length) return { findings, closed: false, length: 0, area: null };
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -35,49 +35,155 @@ export function analyzeCurve(polylines, opts = {}) {
   const clipped = !!b && (minX <= b.xmin + extent * 1e-6 || maxX >= b.xmax - extent * 1e-6
     || minY <= b.ymin + extent * 1e-6 || maxY >= b.ymax - extent * 1e-6);
 
-  const one = lines.length === 1 ? lines[0] : null;
+  let one = lines.length === 1 ? lines[0] : null;
+
+  // 같은 길을 여러 번 되짚어 그리는 곡선이 있다. r = sin 3θ 는 꽃잎 3장을 두 번 그린다.
+  // 그대로 재면 둘레가 두 배가 되고, 겹친 두 경로가 꽃잎 끝에서 엇갈리며
+  // 없는 자기교차가 잔뜩 생긴다. 한 바퀴만 잘라 내어 재고, 그 사실을 따로 알린다.
+  let repeats = 1;
+  if (one) {
+    const period = tracePeriod(one, extent);
+    if (period) {
+      repeats = period.times;
+      one = cutByArc(one, period.fraction);
+      lines = [one];
+      length = 0;
+      for (let i = 2; i < one.length; i += 2) {
+        length += Math.hypot(one[i] - one[i - 2], one[i + 1] - one[i - 1]);
+      }
+    }
+  }
+
+  // 되짚는 곡선을 한 바퀴에서 자를 때 끝점이 현 위로 조금 들어오므로 넉넉히 본다
   const closed = !!one && Math.hypot(one[0] - one[one.length - 2], one[1] - one[one.length - 1])
-    < extent * 1e-4;
+    < extent * 1e-3;
 
   const hits = selfIntersections(lines, extent);
   const cross = hits.length;
+  if (repeats > 1) {
+    findings.push({
+      type: 'retrace', title: `같은 길을 ${repeats}번 지납니다`, confidence: 0.9,
+      detail: '매개변수 범위 안에서 곡선이 그만큼 되풀이해 그려집니다. '
+        + '아래 길이와 넓이는 한 바퀴만 재었습니다.',
+    });
+  }
 
   if (closed) {
     // 스스로 가로지르는 곡선은 신발끈 넓이가 상쇄되어 뜻이 흐려지므로 적지 않는다
     const area = Math.abs(shoelace(one)) / 2;
     findings.push({
       type: 'closed', title: '닫힌 곡선', confidence: 1,
-      detail: `시작점으로 되돌아옵니다. 둘레는 약 ${pretty(round4(length))}`
+      detail: `시작점으로 되돌아옵니다. 둘레는 약 ${num(length)}`
         + (cross ? ` 이고, 자기 자신과 ${cross}곳에서 만납니다.`
-          : `, 둘러싼 넓이는 약 ${pretty(round4(area))} 입니다.`),
+          : `, 둘러싼 넓이는 약 ${num(area)} 입니다.`),
     });
-    if (cross) findings.push(crossFinding(hits));
+    if (cross) findings.push(crossFinding(hits, extent));
     return { findings, closed, length, area: cross ? null : area, crossings: hits };
   }
 
   if (!clipped) {
     findings.push({
       type: 'open', title: '열린 곡선', confidence: 0.9,
-      detail: `양 끝이 만나지 않습니다. 그려진 길이는 약 ${pretty(round4(length))} 입니다.`,
+      detail: `양 끝이 만나지 않습니다. 그려진 길이는 약 ${num(length)} 입니다.`,
     });
   } else {
     findings.push({
       type: 'arc', title: '보이는 부분의 길이', confidence: 0.8,
-      detail: `약 ${pretty(round4(length))} 입니다. 곡선이 화면 끝에 닿아 있어 실제로는 더 깁니다.`,
+      detail: `약 ${num(length)} 입니다. 곡선이 화면 끝에 닿아 있어 실제로는 더 깁니다.`,
     });
   }
-  if (cross) findings.push(crossFinding(hits));
+  if (cross) findings.push(crossFinding(hits, extent));
   return { findings, closed, length, area: null, crossings: hits };
 }
 
-function crossFinding(hits) {
+function crossFinding(hits, extent) {
+  // 원점에서 만나는 자리가 1.6e-18 처럼 적히지 않도록 티끌은 0 으로 본다
+  const z = (v) => (Math.abs(v) < extent * 1e-9 ? 0 : v);
   return {
     type: 'selfcross', title: `자기교차 ${hits.length}곳`, confidence: 0.85,
-    detail: hits.slice(0, 6).map(([x, y]) => `(${pretty(round4(x))}, ${pretty(round4(y))})`).join(', ')
+    detail: hits.slice(0, 6).map(([x, y]) => `(${num(z(x))}, ${num(z(y))})`).join(', ')
       + (hits.length > 6 ? ' …' : ''),
     points: hits,
   };
 }
+
+/**
+ * 폴리라인이 같은 길을 되짚는가 — 되짚는다면 몇 번인가.
+ *
+ * 표본이 놓인 차례로 견주면 (cos 3t, sin 3t) 처럼 주기가 표본 수의 약수가 아닌
+ * 경우를 놓친다 (원을 세 바퀴 도는데 400 표본이면 주기가 133.3 이다).
+ * 그래서 **호의 길이로 고르게 다시 표본화한 뒤** 견준다. 되짚는 곡선은 매번
+ * 같은 길이를 지나므로 호의 길이 위에서는 주기가 정확히 맞아떨어진다.
+ */
+function tracePeriod(line, extent) {
+  const M = 720;
+  const rs = resampleByArc(line, M);
+  if (!rs) return null;
+  const tol = extent * 3e-3;
+  const same = (i, j) => Math.hypot(rs[2 * i] - rs[2 * j], rs[2 * i + 1] - rs[2 * j + 1]) < tol;
+
+  for (let times = 2; times <= 8; times++) {
+    const k = M / times;
+    if (!Number.isInteger(k)) continue;
+    let ok = true;
+    for (let t = 0; t < 24 && ok; t++) {
+      const i = Math.round((k * t) / 24);
+      if (!same(i, i + k)) ok = false;
+    }
+    if (ok) return { times, fraction: 1 / times };
+  }
+  return null;
+}
+
+/** 폴리라인을 호의 길이로 고르게 m + 1 개 점으로 다시 표본화 */
+function resampleByArc(line, m) {
+  const n = line.length / 2;
+  if (n < 8) return null;
+  const acc = [0];
+  for (let i = 1; i < n; i++) {
+    acc.push(acc[i - 1]
+      + Math.hypot(line[2 * i] - line[2 * i - 2], line[2 * i + 1] - line[2 * i - 1]));
+  }
+  const total = acc[n - 1];
+  if (!(total > 0)) return null;
+  const out = new Array(2 * (m + 1));
+  let j = 1;
+  for (let k = 0; k <= m; k++) {
+    const s = (total * k) / m;
+    while (j < n - 1 && acc[j] < s) j++;
+    const s0 = acc[j - 1], s1 = acc[j];
+    const t = s1 > s0 ? (s - s0) / (s1 - s0) : 0;
+    out[2 * k] = line[2 * j - 2] + t * (line[2 * j] - line[2 * j - 2]);
+    out[2 * k + 1] = line[2 * j - 1] + t * (line[2 * j + 1] - line[2 * j - 1]);
+  }
+  return out;
+}
+
+/** 폴리라인의 앞쪽 f 만큼(호의 길이 기준)을 잘라 낸다 */
+function cutByArc(line, f) {
+  const n = line.length / 2;
+  let total = 0;
+  for (let i = 1; i < n; i++) {
+    total += Math.hypot(line[2 * i] - line[2 * i - 2], line[2 * i + 1] - line[2 * i - 1]);
+  }
+  const want = total * f;
+  const out = [line[0], line[1]];
+  let acc = 0;
+  for (let i = 1; i < n; i++) {
+    const d = Math.hypot(line[2 * i] - line[2 * i - 2], line[2 * i + 1] - line[2 * i - 1]);
+    if (acc + d >= want) {
+      const t = d > 0 ? (want - acc) / d : 0;
+      out.push(line[2 * i - 2] + t * (line[2 * i] - line[2 * i - 2]),
+        line[2 * i - 1] + t * (line[2 * i + 1] - line[2 * i - 1]));
+      break;
+    }
+    acc += d;
+    out.push(line[2 * i], line[2 * i + 1]);
+  }
+  return out;
+}
+
+const num = (v) => trimNum(round4(v), 6);
 
 const round4 = (v) => {
   if (!isFinite(v) || v === 0) return v;
@@ -177,4 +283,3 @@ function crossPoint(a, b) {
   return [a[0] + t * r[0], a[1] + t * r[1]];
 }
 
-export { trimNum };

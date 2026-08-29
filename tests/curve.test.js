@@ -72,3 +72,23 @@ test('곡선이 없으면 아무 말도 하지 않는다', () => {
   const c = analyzeCurve([], {});
   assert.deepEqual(c.findings, []);
 });
+
+test('같은 길을 되짚어 그리면 한 바퀴만 재고 그 사실을 알린다', () => {
+  // r = sin 3θ 는 [0, 2π] 에서 꽃잎 3장을 두 번 그린다
+  const rose = curve('r = sin(3t)');
+  assert.ok(rose.findings.some((f) => f.title.includes('2번 지납니다')));
+  assert.equal(rose.crossings.length, 1);           // 만나는 자리는 원점 하나
+  // 한 바퀴 길이는 두 바퀴의 절반
+  const twice = curve('r = sin(2t)');               // 4장을 한 번 — 되짚지 않는다
+  assert.equal(twice.findings.some((f) => f.type === 'retrace'), false);
+  assert.ok(rose.length < twice.length);
+});
+
+test('표본 수의 약수가 아닌 주기도 잡는다', () => {
+  // (cos 3t, sin 3t) 는 원을 세 바퀴 — 표본 400개면 주기가 133.3 이라 차례로는 못 찾는다
+  const c = curve('(cos(3t), sin(3t))');
+  assert.ok(c.findings.some((f) => f.title.includes('3번 지납니다')), c.findings.map((f) => f.title).join());
+  assert.equal(c.closed, true);
+  assert.ok(Math.abs(c.length - 2 * Math.PI) < 1e-2, `둘레 ${c.length}`);
+  assert.ok(Math.abs(c.area - Math.PI) < 1e-2, `넓이 ${c.area}`);
+});

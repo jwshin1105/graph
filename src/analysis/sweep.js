@@ -34,9 +34,12 @@ export function objectSignature(obj, bounds, compute, opts = SWEEP_OPTS, exactKi
       const pts = (d.points || []).length;
 
       // 종류는 식에서 기호적으로 뽑는 쪽을 먼저 쓰고, 그게 안 되면 추적한 곡선을 맞춰 본다.
+      // 다만 식이 3차 이상임을 알면(exactKind 가 false) 표본에 맞춰 보지 않는다 —
+      // 데카르트의 잎을 "두 평행선" 이라 부르는 일이 생긴다.
       // 종류를 알면 가지 수는 서명에서 뺀다 — 화면 밖으로 잘린 쌍곡선의 팔이 2개로도
       // 4개로도 세어져서, 분류가 그대로인데도 경계가 있는 것처럼 보이기 때문이다.
-      const kind = (exactKind ? exactKind(obj) : null) || conicKind(d);
+      const ex = exactKind ? exactKind(obj) : null;
+      const kind = typeof ex === 'string' ? ex : (ex === false ? null : conicKind(d));
       const parts = [];
       if (kind) parts.push(kind);
       else if (branches) parts.push(`가지 ${branches}개`);
