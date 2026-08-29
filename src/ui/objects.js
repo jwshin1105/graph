@@ -10,6 +10,7 @@ import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask, polyl
 import { newton2D, levenbergMarquardt, trimNum as tn } from '../math/numeric.js';
 import { analyzeSequence } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
+import { findInvariant } from '../analysis/invariant.js';
 import { analyzeCurve } from '../analysis/curve.js';
 import { analyzeFunction } from '../analysis/functionAnalysis.js';
 import { fitConic } from '../analysis/conic.js';
@@ -857,6 +858,23 @@ function buildRegression(obj, main, ctx) {
   return obj;
 }
 
+/**
+ * 분석에 **쓰지 않은** 항을 더 만든다.
+ * 찾은 규칙을 이 항들에 대어 보면, 데이터에 맞춘 것인지 정말 규칙인지 갈린다.
+ */
+function extraTerms(obj, used, count = 15) {
+  if (!obj.fx || !obj.fy) return [];
+  const v = obj.varName;
+  const start = (obj.nRange ? obj.nRange[1] : obj.n0 + used) + 7;
+  const out = [];
+  for (let n = start; out.length < count && n < start + count * 3; n++) {
+    const x = obj.fx({ [v]: n });
+    const y = obj.fy({ [v]: n });
+    if (isFinite(x) && isFinite(y)) out.push([x, y]);
+  }
+  return out;
+}
+
 /** 점열 — P_n = (x_n, y_n) 도 P(n) = (f(n), g(n)) 도 같은 대상이다 */
 function buildPointSeq(obj, name, idxVar, tuple, ctx, ranges) {
   obj.kind = 'pointseq';
@@ -1627,7 +1645,14 @@ export function analyzeObject(obj, bounds, ctx) {
         const dv = obj.substitute || 'x';
         if (isDiscreteSet(obj.domains && obj.domains.get(dv))) {
           const d = computeObject(obj, bounds);
-          const r = analyzePointSet(d.points);
+          const fn = obj.fn;
+          const lastX = d.points.length ? d.points[d.points.length - 1][0] : 0;
+          const extra = [];
+          for (let n = Math.round(lastX) + 7; extra.length < 15; n++) {
+            const y = fn({ [dv]: n });
+            if (isFinite(y)) extra.push([n, y]);
+          }
+          const r = analyzePointSet(d.points, { extra });
           return { title: '이산 점열 분석', ...r,
             lead: `정의역이 ${domainText(obj.domains.get(dv))} 이므로 곡선이 아니라 `
               + `점 ${d.points.length}개입니다.` };
@@ -1717,7 +1742,8 @@ export function analyzeObject(obj, bounds, ctx) {
       }
       case 'pointseq': {
         const d = computeObject(obj, bounds);
-        const r = analyzePointSet(d.points);
+        // 찾은 규칙을 **쓰지 않은 항**으로 확인하려고 항을 더 만들어 둔다
+        const r = analyzePointSet(d.points, { extra: extraTerms(obj, d.points.length) });
         const [lo, hi] = obj.nRange || [obj.n0, obj.n0 + 19];
         return { title: '점열 분석', ...r,
           lead: `${obj.varName} = ${lo}…${hi} 에서 얻은 점 ${d.points.length}개: `

@@ -73,7 +73,7 @@ test('갈래 등차수열 — 삼각방정식 해의 표준형', () => {
   assert.equal(r.findings[0].formula, 'a = π/6 + 2π·k   또는   a = 5π/6 + 2π·k   (k = 0, 1, 2, …)');
   // 한 갈래로 충분한 경우에는 갈래로 쪼개지 않는다
   assert.equal(analyzeSequence([1, 3, 5, 7, 9, 11]).findings[0].type, 'arithmetic');
-  assert.equal(analyzeSequence([3, 1, 4, 1, 5, 9, 2, 6]).findings.length, 0);
+  assert.deepEqual(analyzeSequence([3, 1, 4, 1, 5, 9, 2, 6]).findings.filter((f) => !f.basic), []);
 });
 
 test('교점 점열에서 x 좌표의 규칙을 읽는다', () => {

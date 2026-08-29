@@ -59,7 +59,9 @@ test('소수 수열은 사전에서 찾는다', () => {
 
 test('규칙 없는 수열은 억지로 규칙을 만들지 않는다', () => {
   const r = analyzeSequence([3, 1, 4, 1, 5, 9, 2, 6]);
-  assert.equal(r.findings.length, 0);
+  // 늘 붙는 기본 성질(오르내림 횟수 등)은 데이터에서 읽은 사실이므로 남는다.
+  // "규칙" 이라고 내세우는 것이 하나도 없어야 한다.
+  assert.deepEqual(r.findings.filter((f) => !f.basic), []);
 });
 
 test('점화식 계수와 다항식 복원 유틸', () => {

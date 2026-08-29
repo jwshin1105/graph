@@ -6,10 +6,78 @@
 
 import { pretty, trimNum, coefTerm, signed, baseStr } from '../math/numeric.js';
 import { analyzeSequence } from './sequence.js';
+import { findInvariant } from './invariant.js';
 import { fitModels } from './fitting.js';
 import { fitConic } from './conic.js';
 
 const near = (a, b, s) => Math.abs(a - b) <= 1e-7 * Math.max(1, s);
+
+/**
+ * 차분벡터 ΔP_n = P_{n+1} − P_n 과 Δ²P_n.
+ * 모두 같으면 평행이동으로 얻어지는 점열이고, Δ² 가 같으면 등가속 배치다.
+ * 이어서 기울기와 방향각의 규칙도 본다.
+ */
+function diffVectors(pts) {
+  const out = [];
+  const n = pts.length;
+  const d1 = [];
+  for (let i = 1; i < n; i++) d1.push([pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]]);
+  const sx = spread(pts.map((p) => p[0]));
+  const sy = spread(pts.map((p) => p[1]));
+  const sc = Math.max(sx, sy, 1e-12);
+  const same = (list) => list.every(([a, b]) => Math.abs(a - list[0][0]) < sc * 1e-9
+    && Math.abs(b - list[0][1]) < sc * 1e-9);
+
+  if (d1.length >= 2 && same(d1)) {
+    out.push({
+      type: 'translation', title: '같은 벡터만큼 옮겨 간 점열', confidence: 1,
+      detail: `ΔP = (${pretty(d1[0][0])}, ${pretty(d1[0][1])}) 가 내내 같습니다. `
+        + '앞의 점을 그 벡터만큼 평행이동하면 다음 점이 됩니다.',
+      formula: `P_{n+1} = P_n + (${pretty(d1[0][0])}, ${pretty(d1[0][1])})`,
+      hypothesis: true,
+    });
+    return out;
+  }
+  const d2 = [];
+  for (let i = 1; i < d1.length; i++) d2.push([d1[i][0] - d1[i - 1][0], d1[i][1] - d1[i - 1][1]]);
+  if (d2.length >= 2 && same(d2)) {
+    out.push({
+      type: 'accel', title: '차분벡터가 일정하게 늘어남 (Δ²P 가 같음)', confidence: 0.95,
+      detail: `Δ²P = (${pretty(d2[0][0])}, ${pretty(d2[0][1])}) 로 일정합니다. `
+        + '이동 벡터가 매번 같은 만큼씩 바뀝니다.',
+      hypothesis: true,
+    });
+  }
+
+  // 이웃한 점을 잇는 선분의 기울기와 방향각
+  const slopes = d1.filter(([dx]) => Math.abs(dx) > sc * 1e-12).map(([dx, dy]) => dy / dx);
+  if (slopes.length >= 3) {
+    const r = analyzeSequence(slopes, { name: 'm' });
+    const top = r.findings.find((f) => f.confidence >= 0.95 && f.type !== 'constant');
+    if (top) {
+      out.push({ ...top, title: `이웃을 잇는 기울기의 규칙: ${top.title}`, confidence: 0.8, hypothesis: true });
+    }
+  }
+  const angles = d1.map(([dx, dy]) => Math.atan2(dy, dx));
+  if (angles.length >= 3) {
+    const turn = [];
+    for (let i = 1; i < angles.length; i++) {
+      let t = angles[i] - angles[i - 1];
+      while (t > Math.PI) t -= 2 * Math.PI;
+      while (t < -Math.PI) t += 2 * Math.PI;
+      turn.push(t);
+    }
+    const m = turn.reduce((a, b) => a + b, 0) / turn.length;
+    if (turn.every((t) => Math.abs(t - m) < 1e-9 * Math.max(1, Math.abs(m))) && Math.abs(m) > 1e-9) {
+      out.push({
+        type: 'turn', title: '방향이 일정하게 꺾임', confidence: 0.9,
+        detail: `이웃을 잇는 방향이 매번 ${pretty((m * 180) / Math.PI)}° 씩 돌아갑니다.`,
+        hypothesis: true,
+      });
+    }
+  }
+  return out;
+}
 
 function spread(v) {
   const mx = Math.max(...v), mn = Math.min(...v);
@@ -139,6 +207,28 @@ export function analyzePointSet(points, opts = {}) {
   // 8) 닮음변환 규칙: p_{k+1} = w·p_k + c (복소수) — 회전·확대·로그나선을 한 번에 잡는다
   const sim = ordered ? similarityRule(given) : null;
   if (sim) push(sim);
+
+  // 8.5) 점들이 함께 만족하는 **대수적 관계** — (cos n, sin n) → x² + y² = 1
+  //      계수를 유리수로 되돌린 뒤 모든 점에서 정말 0 인지 다시 확인한 것만 인정한다.
+  const inv = findInvariant(given, opts.extra || []);
+  if (inv) {
+    const conf = inv.checked
+      ? `주어진 점 ${given.length}개가 모두 이 식을 만족하고, `
+        + `확인용으로 더 만든 점 ${inv.checked}개 중 ${inv.passed}개도 만족합니다.`
+      : `주어진 점 ${given.length}개가 모두 이 식을 만족합니다.`;
+    push({
+      type: 'invariant', title: `관계식 후보: ${inv.text}`,
+      confidence: inv.checked && inv.passed === inv.checked ? 0.95 : 0.8,
+      detail: `${conf} 유한한 점으로는 규칙을 하나로 정할 수 없으므로 **가설**입니다.`,
+      formula: inv.text, hypothesis: true,
+      verified: inv.checked ? { checked: inv.checked, passed: inv.passed } : null,
+    });
+  }
+
+  // 8.6) 차분벡터 ΔP, Δ²P — 평행이동·등속·등가속 배치를 가른다
+  if (ordered && n >= 3) {
+    for (const f of diffVectors(pts)) push(f);
+  }
 
   // 9) 함수 관계 y = f(x)
   if (n >= 4 && new Set(xs.map((x) => Math.round(x * 1e9))).size === n) {

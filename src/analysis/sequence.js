@@ -269,7 +269,9 @@ export function analyzeSequence(values, opts = {}) {
   }
 
   // exact: 식을 정확히(허용오차 안에서) 만족시키는 규칙. 근사 모형보다 항상 앞선다.
-  const push = (f) => findings.push({ confidence: 0.9, exact: true, ...f });
+  // 데이터에서 찾아낸 "규칙"은 모두 **가설**이다. 유한한 항으로는 하나로 정할 수 없다.
+  // (사실로 적을 수 있는 것은 증가·감소처럼 데이터 자체를 읽은 것뿐이다.)
+  const push = (f) => findings.push({ confidence: 0.9, exact: true, hypothesis: true, ...f });
   const idx = (k) => n0 + k;
   const nvar = 'n';
   const shiftStr = n0 === 1 ? nvar : n0 === 0 ? `(${nvar}+1)` : `(${nvar}-${n0 - 1})`;
@@ -573,10 +575,150 @@ function closedForm(v, n0, roots, nm, nvar) {
 }
 
 function finish(findings, v, n0, nm, opts) {
-  findings.sort((a, b) => (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.confidence - a.confidence);
+  // 늘 붙는 기본 성질 — 단조성·성장률·극한 후보
+  // 늘 붙는 성질은 "규칙"이 아니라 곁들이는 정보이므로 뒤에 세운다
+  for (const f of basicShape(v, nm)) {
+    findings.push({ confidence: 0.9, exact: true, basic: true, ...f });
+  }
+
+  findings.sort((a, b) => (a.basic ? 1 : 0) - (b.basic ? 1 : 0)
+    || (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.confidence - a.confidence);
   const summary = summarize(findings, v, n0, nm);
   return { findings, terms: v, n0, name: nm, summary, opts };
 }
+
+/**
+ * 어느 수열에나 물어볼 수 있는 것들 — 늘어나는가, 얼마나 빨리, 어디로 가는가.
+ */
+function basicShape(v, nm) {
+  const out = [];
+  const n = v.length;
+  if (n < 3) return out;
+  const sc = scaleOf(v);
+  const d = [];
+  for (let i = 1; i < n; i++) d.push(v[i] - v[i - 1]);
+  const up = d.every((x) => x > sc * 1e-12);
+  const down = d.every((x) => x < -sc * 1e-12);
+  const flat = d.every((x) => Math.abs(x) <= sc * 1e-12);
+  const nonDec = d.every((x) => x >= -sc * 1e-12);
+  const nonInc = d.every((x) => x <= sc * 1e-12);
+  if (flat) {
+    out.push({ type: 'flat', title: '일정한 수열', confidence: 1,
+      detail: `모든 항이 ${pretty(v[0])} 로 같습니다.` });
+  } else if (up || down) {
+    out.push({ type: 'mono', title: up ? '증가하는 수열' : '감소하는 수열', confidence: 1,
+      detail: up ? '앞의 항보다 늘 큽니다.' : '앞의 항보다 늘 작습니다.' });
+  } else if (nonDec || nonInc) {
+    out.push({ type: 'mono', title: nonDec ? '증가 (같은 값이 이어지기도 함)' : '감소 (같은 값이 이어지기도 함)',
+      confidence: 0.95, detail: '줄었다 늘었다 하지는 않습니다.' });
+  } else {
+    let flips = 0;
+    for (let i = 1; i < d.length; i++) if (d[i] * d[i - 1] < 0) flips++;
+    out.push({ type: 'osc', title: `오르내림 ${flips}번`, confidence: 0.8,
+      detail: '한쪽으로만 가지 않고 방향이 바뀝니다.' });
+  }
+
+  // 성장률 — 비가 일정하면 지수, 로그를 취해 로그와 견주면 다항식
+  const ratios = [];
+  for (let i = 1; i < n; i++) if (Math.abs(v[i - 1]) > sc * 1e-12) ratios.push(v[i] / v[i - 1]);
+  if (ratios.length >= 3) {
+    const last = ratios.slice(-Math.min(6, ratios.length));
+    const m = last.reduce((a, b) => a + b, 0) / last.length;
+    const tight = last.every((r) => Math.abs(r - m) < 1e-6 * Math.max(1, Math.abs(m)));
+    if (tight && Math.abs(m - 1) > 1e-6) {
+      out.push({ type: 'growth', title: `지수적으로 ${m > 1 ? '커집니다' : '작아집니다'}`, confidence: 0.9,
+        detail: `이웃한 항의 비가 ${pretty(m)} 로 일정합니다 — 성장률 ${pretty(m)}.`,
+        hypothesis: true, basic: false });
+    } else if (v.every((x) => x > 0) && n >= 6) {
+      // log a_n 을 log n 에 맞춰 보면 다항식 차수가 나온다
+      const xs = v.map((_, i) => Math.log(i + 1));
+      const ys = v.map((x) => Math.log(x));
+      const k = slopeOf(xs, ys);
+      if (k !== null && Math.abs(k - Math.round(k)) < 0.02 && Math.round(k) >= 1) {
+        out.push({ type: 'growth', title: `대략 n^${Math.round(k)} 로 커집니다`, confidence: 0.7,
+          detail: `log a_n 이 log n 에 거의 비례합니다 (기울기 ${pretty(k)}). 성장률이 다항식꼴입니다.`,
+          hypothesis: true, basic: false });
+      }
+    }
+  }
+
+  // 극한 후보 — 뒤쪽 항이 한 값으로 모이는가
+  if (n >= 6) {
+    const tail = v.slice(-6);
+    const diffs = [];
+    for (let i = 1; i < tail.length; i++) diffs.push(Math.abs(tail[i] - tail[i - 1]));
+    const gap = diffs[diffs.length - 1];
+    if (gap < diffs[0] * 0.6) {
+      // 에이트킨 Δ² 를 거듭 걸어 당긴다. 한 번만 걸면 1/n 처럼 천천히 모이는 수열에서
+      // 여전히 한참 모자란 값이 나온다 (1/8 에서 0.07 로).
+      const acc = aitkenChain(v, 3);
+      const err = acc.error;
+      if (acc.value !== null && err < Math.abs(gap)) {
+        out.push({ type: 'limit', title: `극한 후보: ${nm}_n → ${pretty(round(acc.value, err))}`,
+          confidence: 0.7,
+          detail: `뒤쪽 항의 간격이 ${pretty(diffs[0])} 에서 ${pretty(gap)} 로 줄어듭니다. `
+            + `가속해서 좁히면 ${pretty(round(acc.value, err))} 쯤입니다 (오차 ${pretty(err)}). `
+            + '주어진 항만으로는 정말 모이는지 알 수 없으므로 가설입니다.',
+          hypothesis: true, basic: false });
+      } else {
+        out.push({ type: 'limit', title: '한 값으로 모이는 것으로 보임', confidence: 0.6,
+          detail: `뒤쪽 항의 간격이 ${pretty(diffs[0])} 에서 ${pretty(gap)} 로 줄어듭니다. `
+            + '다만 어느 값으로 모이는지는 주어진 항만으로 좁히기 어렵습니다.',
+          hypothesis: true, basic: false });
+      }
+    }
+  }
+  return out;
+}
+
+/** 에이트킨 Δ² 를 거듭 걸어 극한을 당긴다 */
+function aitkenChain(v, times) {
+  let seq = v.slice(-9);
+  let prev = seq[seq.length - 1];
+  let value = null;
+  let error = Infinity;
+  for (let t = 0; t < times && seq.length >= 3; t++) {
+    const next = [];
+    for (let i = 0; i + 2 < seq.length; i++) {
+      const den = (seq[i + 2] - seq[i + 1]) - (seq[i + 1] - seq[i]);
+      if (Math.abs(den) < 1e-300) continue;
+      const r = seq[i] - ((seq[i + 1] - seq[i]) ** 2) / den;
+      if (isFinite(r)) next.push(r);
+    }
+    if (!next.length) break;
+    seq = next;
+    value = seq[seq.length - 1];
+    error = Math.abs(value - prev);
+    prev = value;
+  }
+  return { value, error };
+}
+
+function slopeOf(xs, ys) {
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
+  return den > 0 ? num / den : null;
+}
+
+/** 마지막 세 항에 에이트킨 Δ² 를 걸어 극한을 당겨 본다 */
+function aitkenLast(v) {
+  const n = v.length;
+  if (n < 3) return null;
+  const [a, b, c] = [v[n - 3], v[n - 2], v[n - 1]];
+  const den = (c - b) - (b - a);
+  if (Math.abs(den) < 1e-300) return null;
+  const r = a - ((b - a) ** 2) / den;
+  return isFinite(r) ? r : null;
+}
+
+const round = (v, err) => {
+  if (!(err > 0)) return v;
+  const d = Math.max(0, Math.min(12, Math.floor(-Math.log10(err))));
+  return Number(v.toFixed(d));
+};
 
 function summarize(findings, v, n0, nm) {
   const head = `${nm}_${n0} = ${pretty(v[0])} 부터 ${v.length}개 항`;
