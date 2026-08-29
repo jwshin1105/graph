@@ -101,7 +101,12 @@ function conicKind(d) {
   }
   if (sample.length < 6) return null;
   const c = fitConic(sample.slice(0, 120));
-  return c && c.residual < 1e-3 ? c.kind : null;
+  if (!c || c.residual >= 1e-3) return null;
+  // 퇴화한 종류는 표본을 맞춰 본 것으로 단정하지 않는다.
+  // 아주 납작한 쌍곡선의 두 팔은 화면에 잘리면 "두 직선" 처럼 보인다.
+  // 퇴화 여부는 계수를 정확히 따지는 쪽(exactKind)만 말할 수 있다.
+  if (['두 직선(교차)', '두 평행선', '겹친 직선', '한 점', '해 없음'].includes(c.kind)) return null;
+  return c.kind;
 }
 
 /**

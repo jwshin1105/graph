@@ -147,7 +147,8 @@ test('정해지지 않은 기호는 이유를 밝히고 멈춘다', () => {
 test('까다로운 음함수도 그린다', () => {
   const hard = {
     'x^3+y^3=3x y': 1, 'max(x,y)=1': 1, 'x^4+y^4=1': 1,
-    '(x^2+y^2)^2=4(x^2-y^2)': 2, 'abs(x)+abs(y)=1': 1,
+    // 레므니스케이트는 원점을 지나는 한 곡선이다 (예전에는 원점에서 끊겨 2가지였다)
+    '(x^2+y^2)^2=4(x^2-y^2)': 1, 'abs(x)+abs(y)=1': 1,
   };
   for (const [src, minLines] of Object.entries(hard)) {
     const o = make(src);

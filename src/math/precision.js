@@ -7,6 +7,7 @@
 const state = {
   internal: 30,   // 내부 계산 유효숫자
   display: 12,    // 화면 표시 유효숫자
+  epsilon: 0.08,  // 그래프 허용 오차 (화면 픽셀). 등고선은 이 아래로 내려갈 때까지 세분한다
 };
 
 export function getPrecision() { return { ...state }; }
@@ -21,6 +22,9 @@ export function setPrecision(next = {}) {
   if (Number.isFinite(next.display)) {
     state.display = Math.max(3, Math.min(state.internal, Math.round(next.display)));
   }
+  if (Number.isFinite(next.epsilon)) {
+    state.epsilon = Math.max(0.001, Math.min(4, next.epsilon));
+  }
   // 표시가 내부보다 정밀할 수는 없다
   if (state.display > state.internal) state.display = state.internal;
   return getPrecision();
@@ -28,3 +32,4 @@ export function setPrecision(next = {}) {
 
 export const internalDigits = () => state.internal;
 export const displayDigits = () => state.display;
+export const graphEpsilon = () => state.epsilon;

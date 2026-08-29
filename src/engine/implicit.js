@@ -1,8 +1,10 @@
 // 음함수 f(x,y)=0 의 해집합 추적 엔진.
 //
 // GeoGebra 류의 균일 격자 marching squares 를 세 가지 방향으로 보완했다.
-//   1) 2단 적응 격자   — 해가 지나갈 가능성이 있는 셀만 8~32배로 세분한다.
-//      (같은 배율로 세분하므로 셀 경계에 T-접합 틈이 생기지 않는다)
+//   1) 적응 격자 — 셀마다 f 가 휘는 정도를 재어 필요한 만큼만 세분한다.
+//      허용 오차 ε(화면 픽셀 단위)을 정하면 그 아래로 내려갈 배율을 스스로 고른다.
+//      이웃과 한 단계 넘게 차이 나지 않게 다듬어 셀 경계의 이음매를 막는다.
+//      셀 안에 통째로 든 작은 고리를 놓치지 않도록 반 칸 격자(9점)로 훑는다.
 //   2) 점근선 판별      — 부호가 뒤집혀도 값이 폭발하면 근이 아니라 극점으로 보고 버린다.
 //   3) 고립해(점열) 탐색 — 부호 변화가 전혀 없는 셀에서도 |f| 의 국소 최소를 찾아
 //      x²+y²=0, sin²x+sin²y=0 처럼 "점"으로만 이루어진 해집합을 복원한다.
@@ -29,10 +31,12 @@ const CASES = {
 export function traceImplicit(f, view, opts = {}) {
   const {
     coarsePx = 14,          // 성긴 셀의 화면상 크기(px)
-    refine = 10,            // 활성 셀 세분 배율 (모든 활성 셀에 동일하게 적용해
-                            //  이웃 셀과 모서리 표본이 정확히 일치 → 이음매 없음)
-    findIsolated = true,    // 고립해(점열) 탐색 여부
+    refine = null,          // 세분 배율을 손으로 정하고 싶을 때 (null 이면 ε 로 자동)
+    epsilonPx = 0.08,       // 허용 오차 — 곡선이 화면에서 이만큼(px)보다 어긋나지 않게
+    findIsolated = true,
     maxCoarse = 200,
+    maxRefine = 64,
+    budget = 250000,        // 세분 표본 수 상한 (넘으면 모든 단계를 함께 낮춘다)
   } = opts;
 
   const { xmin, xmax, ymin, ymax } = view;
@@ -50,28 +54,42 @@ export function traceImplicit(f, view, opts = {}) {
     return typeof v === 'number' ? v : NaN;
   };
 
-  // ── 1단계: 성긴 격자 표본 ──────────────────────────────────
-  const g = new Float64Array((nx + 1) * (ny + 1));
-  for (let j = 0; j <= ny; j++) {
-    const y = ymin + j * hy;
-    for (let i = 0; i <= nx; i++) g[j * (nx + 1) + i] = F(xmin + i * hx, y);
+  // ── 1단계: 반 칸 격자로 훑는다 ────────────────────────────
+  // 꼭짓점만 보면 셀 하나에 통째로 든 작은 고리를 놓친다 (부호가 안 바뀐다).
+  // 모서리 중점과 셀 중심까지 함께 보면 그런 것도 걸린다.
+  const mx = 2 * nx;
+  const my = 2 * ny;
+  const g = new Float64Array((mx + 1) * (my + 1));
+  const sx2 = hx / 2;
+  const sy2 = hy / 2;
+  for (let b = 0; b <= my; b++) {
+    const y = ymin + b * sy2;
+    for (let a = 0; a <= mx; a++) g[b * (mx + 1) + a] = F(xmin + a * sx2, y);
   }
-  const at = (i, j) => g[j * (nx + 1) + i];
+  const half = (a, b) => g[b * (mx + 1) + a];
+  const at = (i, j) => half(2 * i, 2 * j);
 
   const segments = [];
   const points = [];
   const cellDiag = Math.hypot(hx, hy);
+  const worldPerPx = Math.max((xmax - xmin) / W, (ymax - ymin) / H);
+  const eps = Math.max(1e-12, epsilonPx * worldPerPx);
 
-  // 셀마다 |f| 의 최솟값을 기록해 둔다 — 뒤에서 "국소 최소 셀"을 골라내는 데 쓴다.
   const cellMin = new Float64Array(nx * ny).fill(Infinity);
   const produced = new Uint8Array(nx * ny);
+  const level = new Int8Array(nx * ny).fill(-1);      // -1 = 비활성
 
+  // ── 2단계: 셀마다 필요한 세분 정도를 정한다 ──────────────
+  // 조각선분이 참 곡선에서 벗어나는 정도는 칸 크기의 제곱에 비례한다.
+  // 한 칸 안에서 f 가 얼마나 휘는지를 (중심값 − 꼭짓점 평균) 으로 재고,
+  // 기울기로 나눠 길이 단위의 오차로 바꾼 뒤, 그 오차가 ε 아래로 내려갈 배율을 고른다.
   for (let j = 0; j < ny; j++) {
     for (let i = 0; i < nx; i++) {
-      const v = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
-      const nan = v.some((t) => !isFinite(t));
+      const st = [];
+      for (let b = 0; b <= 2; b++) for (let a = 0; a <= 2; a++) st.push(half(2 * i + a, 2 * j + b));
+      const nan = st.some((t) => !isFinite(t));
       let pos = 0, neg = 0, minAbs = Infinity;
-      for (const t of v) {
+      for (const t of st) {
         if (!isFinite(t)) continue;
         if (t > 0) pos++; else if (t < 0) neg++; else { pos++; neg++; }
         minAbs = Math.min(minAbs, Math.abs(t));
@@ -79,14 +97,49 @@ export function traceImplicit(f, view, opts = {}) {
       cellMin[j * nx + i] = minAbs;
       const crosses = pos > 0 && neg > 0;
 
-      const gx = (v[1] - v[0]) / hx;
-      const gy = (v[3] - v[0]) / hy;
+      const c00 = st[0], c10 = st[2], c01 = st[6], c11 = st[8], center = st[4];
+      const gx = (c10 - c00) / hx;
+      const gy = (c01 - c00) / hy;
       const gradMag = Math.hypot(gx, gy);
-      const nearZero = isFinite(minAbs) && minAbs <= gradMag * cellDiag * 1.2;
-
+      // 부호가 안 바뀌어도 셀 안에서 f 가 0 을 스칠 수 있다. 그 가능성은
+      // **셀 안에서 실제로 관찰된 변화폭**으로 가늠한다. 꼭짓점 두 개로 기울기를
+      // 어림하면 y = sin 50x 처럼 한 칸에 한 주기가 들어가는 식에서 크게 어긋나
+      // 화면 전체가 활성 셀이 된다.
+      let lo9 = Infinity, hi9 = -Infinity;
+      for (const t of st) if (isFinite(t)) { lo9 = Math.min(lo9, t); hi9 = Math.max(hi9, t); }
+      const swing = isFinite(lo9) ? hi9 - lo9 : 0;
+      const nearZero = isFinite(minAbs) && minAbs <= swing * 0.75;
       if (!crosses && !nearZero && !nan) continue;
+
+      let k;
+      if (refine) k = refine;
+      else {
+        // 휘어짐을 길이 오차로: |f(중심) − 꼭짓점 평균| / |∇f|
+        const bend = Math.abs(center - (c00 + c10 + c01 + c11) / 4);
+        const errAt1 = gradMag > 0 && isFinite(bend) ? bend / gradMag : cellDiag;
+        const need = Math.sqrt(Math.max(errAt1, 0) / eps);
+        k = Math.pow(2, Math.ceil(Math.log2(Math.max(2, Math.min(maxRefine, need)))));
+        if (!isFinite(k)) k = maxRefine;
+      }
+      level[j * nx + i] = Math.round(Math.log2(Math.max(2, Math.min(maxRefine, k))));
+    }
+  }
+
+  // ── 3단계: 이웃과 한 단계 넘게 차이 나지 않도록 고른다 ────
+  // 세분 배율이 크게 어긋나면 셀 경계에서 이음매가 벌어진다.
+  balanceLevels(level, nx, ny);
+  scaleToBudget(level, nx, ny, budget);
+
+  // ── 4단계: 활성 셀을 각자의 배율로 세분한다 ──────────────
+  let maxK = 2;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const lv = level[j * nx + i];
+      if (lv < 0) continue;
+      const k = 1 << lv;
+      maxK = Math.max(maxK, k);
       const before = segments.length;
-      marchCell(F, xmin + i * hx, ymin + j * hy, hx, hy, refine, segments);
+      marchCell(F, xmin + i * hx, ymin + j * hy, hx, hy, k, segments);
       if (segments.length > before) produced[j * nx + i] = 1;
     }
   }
@@ -130,7 +183,11 @@ export function traceImplicit(f, view, opts = {}) {
     }
   }
 
-  const tol = (Math.max(hx, hy) / refine) * 1.5;
+  // 잇는 허용치. 같은 단계의 이웃 셀은 모서리 표본이 정확히 같은 값이라 딱 맞고,
+  // 한 단계 다른 이웃은 ε 만큼만 어긋난다. 그러니 ε 의 몇 배면 넉넉하다.
+  // 이걸 성긴 쪽 칸 크기로 잡으면 촘촘한 곡선에서 한 칸에 수백 개가 들어가
+  // 잇는 데만 몇 백 ms 가 든다.
+  const tol = Math.max(8 * eps, (Math.max(hx, hy) / maxK) * 6);
   const polylines = stitch(segments, tol);
   const snap = (v) => (Math.abs(v) < cellDiag * 1e-9 ? 0 : v);
   // 곡선 위에 이미 그려진 자리는 고립해가 아니다.
@@ -138,7 +195,45 @@ export function traceImplicit(f, view, opts = {}) {
   // 첨점(y³ = x² 의 원점)처럼 곡선 위에 정확히 놓인 점만 걸러내면 되므로 좁게 잡는다.
   const isolated = dropOnCurve(dedupe(points, Math.max(hx, hy) * 0.02), polylines, cellDiag * 0.15)
     .map(([x, y]) => [snap(x), snap(y)]);
-  return { polylines, points: isolated, evals };
+  return { polylines, points: isolated, evals, epsilon: eps };
+}
+
+/**
+ * 이웃한 활성 셀의 세분 단계가 1 을 넘게 차이 나지 않도록 다듬는다.
+ * 4:1 로 어긋나면 경계에서 조각선분이 서로 어긋나 이음매가 보인다.
+ */
+function balanceLevels(level, nx, ny) {
+  for (let pass = 0; pass < 6; pass++) {
+    let changed = false;
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const k = j * nx + i;
+        if (level[k] < 0) continue;
+        for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const a = i + di, b = j + dj;
+          if (a < 0 || b < 0 || a >= nx || b >= ny) continue;
+          const nk = b * nx + a;
+          if (level[nk] < 0) continue;
+          if (level[nk] < level[k] - 1) { level[nk] = level[k] - 1; changed = true; }
+        }
+      }
+    }
+    if (!changed) break;
+  }
+}
+
+/** 계획한 표본 수가 예산을 넘으면 모든 단계를 함께 낮춘다 */
+function scaleToBudget(level, nx, ny, budget) {
+  for (let guard = 0; guard < 8; guard++) {
+    let work = 0;
+    for (let k = 0; k < level.length; k++) if (level[k] >= 0) work += (1 << level[k]) ** 2;
+    if (work <= budget) return;
+    let any = false;
+    for (let k = 0; k < level.length; k++) {
+      if (level[k] > 1) { level[k] -= 1; any = true; }
+    }
+    if (!any) return;
+  }
 }
 
 /** 하나의 성긴 셀을 k×k 로 세분해 marching squares 를 돌린다. */
@@ -294,7 +389,12 @@ export function findIsolatedZero(F, x0, y0, hx, hy) {
 /** 선분 조각들을 이어 폴리라인으로 만든다. */
 export function stitch(segments, tol) {
   if (!segments.length) return [];
-  const key = (x, y) => `${Math.round(x / tol)},${Math.round(y / tol)}`;
+  // 칸 이름을 문자열로 만들면 이음 한 번에 9개씩 새 문자열이 생긴다.
+  // 표본이 2만 개쯤 되는 곡선에서는 그 할당과 청소가 전체 시간의 6할을 먹었다.
+  // 두 정수를 하나의 수로 접어 Map 의 키로 쓴다.
+  const SPAN = 1 << 22;
+  const cellKey = (bx, by) => (by + (SPAN >> 1)) * SPAN + (bx + (SPAN >> 1));
+  const key = (x, y) => cellKey(Math.round(x / tol), Math.round(y / tol));
   const map = new Map();
   const addEnd = (k, idx) => {
     if (!map.has(k)) map.set(k, []);
@@ -307,14 +407,25 @@ export function stitch(segments, tol) {
   const used = new Uint8Array(segments.length);
   const out = [];
 
+  // 이미 쓴 선분은 칸에서 걷어낸다. 그러지 않으면 촘촘한 곡선에서 같은 칸을
+  // 몇 번이고 훑게 되어, 표본이 2만 개쯤 되면 잇는 데만 몇 백 ms 가 든다.
   const neighbours = (x, y, self) => {
     const res = [];
     const bx = Math.round(x / tol), by = Math.round(y / tol);
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
-        const list = map.get(`${bx + dx},${by + dy}`);
+        const k = cellKey(bx + dx, by + dy);
+        const list = map.get(k);
         if (!list) continue;
-        for (const idx of list) if (idx !== self && !used[idx]) res.push(idx);
+        let w = 0;
+        for (let r = 0; r < list.length; r++) {
+          const idx = list[r];
+          if (used[idx]) continue;
+          list[w++] = idx;
+          if (idx !== self) res.push(idx);
+        }
+        list.length = w;
+        if (w === 0) map.delete(k);
       }
     }
     return res;

@@ -89,6 +89,9 @@ test('제너레이터는 진행률을 흘려보내고 같은 결과를 낸다', 
   const s = setup(['a = 1', 'x^2 + a y^2 = 1'], 'a');
   const it = sweepSteps({
     objects: s.targets, setParam: s.setParam, min: -2, max: 2, bounds: B, compute: computeObject,
+    // 표본을 맞춰 보는 것만으로는 아주 납작한 쌍곡선의 종류를 가릴 수 없다.
+    // 앱과 같은 경로(기호 판정)를 쓴다.
+    ...sweepHooks(s.targets, s.ctx, 'a'),
   });
   let step = it.next();
   let count = 0;
@@ -176,13 +179,15 @@ test('시간 예산을 넘겨도 결과를 돌려준다', () => {
   assert.ok(r.stages.length >= 1);
 });
 
-test('계산 설정이 실제로 전달된다', () => {
+test('허용 오차 설정이 실제로 전달된다', () => {
   const ctx = createContext();
   const o = createObject('x^2 + y^2 = 4', ctx, 1, 0);
-  const fine = computeObject(o, B, {});
-  const coarse = computeObject(o, B, { coarsePx: 40, refine: 4 });
   const count = (d) => d.polylines.reduce((n, l) => n + l.length / 2, 0);
-  assert.ok(count(coarse) < count(fine) / 2, `성긴 설정 ${count(coarse)} vs 기본 ${count(fine)}`);
+  const rough = count(computeObject(o, B, { epsilonPx: 2 }));
+  const normal = count(computeObject(o, B, {}));
+  const fine = count(computeObject(o, B, { epsilonPx: 0.004 }));
+  assert.ok(rough < normal, `${rough} < ${normal}`);
+  assert.ok(normal < fine / 2, `${normal} vs ${fine}`);
 });
 
 test('슬라이더 의존성 판정', () => {

@@ -20,13 +20,13 @@ import { toExact, evalBig, Exact } from '../math/exactval.js';
 import { antiderivative, tanhSinh } from '../math/integrate.js';
 import { limitOf } from '../math/limit.js';
 import * as BFOps from '../math/bigfloat.js';
-import { internalDigits, displayDigits, setPrecision, getPrecision } from '../math/precision.js';
+import { internalDigits, displayDigits, setPrecision, getPrecision, graphEpsilon } from '../math/precision.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
 const ANGLE_VARS = new Set(['t', 'θ', 'theta']);
 const isBuiltin = (n) => Object.prototype.hasOwnProperty.call(FUNCTIONS, n);
 
-export const SETTING_NAMES = ['precision', 'digits'];
+export const SETTING_NAMES = ['precision', 'digits', 'epsilon'];
 // 한 낱말로 읽혀야 하는 표시어 (모르는 이름이면 c·o·n·n·e·c·t 로 쪼개진다)
 export const MARKER_NAMES = ['connect'];
 
@@ -170,13 +170,16 @@ function classify(obj, asts, ctx) {
   // ── 계산 정밀도 설정: precision = 50, digits = 20
   if (main.type === 'cmp' && main.op === '=' && main.a.type === 'var'
       && SETTING_NAMES.includes(main.a.name)) {
-    const n = Math.round(compile(main.b, ctx)({}));
-    const isDisplay = main.a.name === 'digits';
-    const p = setPrecision(isDisplay ? { display: n } : { internal: n });
+    const raw = compile(main.b, ctx)({});
+    const name = main.a.name;
+    const p = setPrecision(name === 'digits' ? { display: Math.round(raw) }
+      : name === 'epsilon' ? { epsilon: raw } : { internal: Math.round(raw) });
     obj.kind = 'setting';
-    obj.label = isDisplay
+    obj.label = name === 'digits'
       ? `화면에 ${p.display}자리까지 (내부 계산은 ${p.internal}자리)`
-      : `내부 계산 ${p.internal}자리 (화면은 ${p.display}자리)`;
+      : name === 'epsilon'
+        ? `그래프 허용 오차 ${p.epsilon}px — 곡선이 이보다 어긋나지 않을 때까지 세분합니다`
+        : `내부 계산 ${p.internal}자리 (화면은 ${p.display}자리)`;
     obj.precision = p;
     return obj;
   }
@@ -1238,7 +1241,8 @@ export function computeObject(obj, bounds, opts = {}) {
         const pts = latticeSolutions(obj, b, dx, dy);
         return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0, lattice: true };
       }
-      const r = traceImplicit((x, y) => obj.f({ x, y }), b, opts);
+      const r = traceImplicit((x, y) => obj.f({ x, y }), b,
+        { epsilonPx: graphEpsilon(), ...opts });
       return {
         polylines: r.polylines, points: r.points, isolated: r.points,
         empty: !r.polylines.length && !r.points.length,
@@ -2070,8 +2074,11 @@ function analyzeImplicit(obj, bounds, ctx) {
   }
   if (nCurves) {
     // 닫혀 있는가, 둘레와 넓이는 얼마인가, 스스로 가로지르는가 —
-    // 계수만 봐서는 나오지 않고 그려 봐야 아는 것들이다
-    findings.push(...analyzeCurve(d.polylines, { bounds }).findings);
+    // 계수만 봐서는 나오지 않고 그려 봐야 아는 것들이다.
+    // 재는 일은 그리는 일보다 정밀해야 하므로 허용 오차를 한참 좁혀 다시 훑는다
+    // (그리는 데는 0.08px 로 충분하지만, 둘레·넓이는 조각선분 개수의 제곱으로 정확해진다).
+    const fine = computeObject(obj, bounds, { epsilonPx: 0.004 });
+    findings.push(...analyzeCurve(fine.polylines || d.polylines, { bounds }).findings);
   }
 
   if (nPts) {
