@@ -327,8 +327,58 @@ test('축 아래 부분이 있으면 부호 없는 넓이도 알려 준다', () 
   const ctx = createContext();
   const o = make('integral(sin x, 0, 2pi)', ctx);
   const f = analyzeObject(o, B, ctx).findings;
-  assert.ok(Math.abs(f[0].detail.includes('0')));
+  assert.match(f[0].title, /정적분 값: 0/);
   const signed = f.find((x) => x.type === 'signed');
   assert.ok(signed, '축 아래 부분을 알리지 않음');
   assert.match(signed.detail, /4/);
+});
+
+// ── 구조화된 분석 보고서 ────────────────────────────────
+test('보고서 머리에 객체 유형과 정의역이 나온다', () => {
+  const ctx = createContext();
+  const o = make('P(n) = (n, n^2); n in Z', ctx);
+  const rows = analyzeObject(o, B, ctx).profile;
+  const get = (k) => (rows.find(([a]) => a === k) || [])[1];
+  assert.equal(get('객체 유형'), '이산 점열');
+  assert.match(get('연속 / 이산'), /이산/);
+  assert.match(get('정의역'), /정수 전체/);
+  assert.equal(get('x_n'), 'n');
+  assert.equal(get('y_n'), 'n^2');
+});
+
+test('연속인 대상은 연속이라고 밝힌다', () => {
+  const ctx = createContext();
+  const o = make('x^2 + y^2 = 4', ctx);
+  const rows = analyzeObject(o, B, ctx).profile;
+  assert.match(rows.find(([a]) => a === '연속 / 이산')[1], /연속/);
+  const ctx2 = createContext();
+  const o2 = make('x^2 + y^2 = 25; x in Z; y in Z', ctx2);
+  const rows2 = analyzeObject(o2, B, ctx2).profile;
+  assert.equal(rows2.find(([a]) => a === '객체 유형')[1], '정수해 (격자점)');
+});
+
+test('값은 정확값·소수 표기·구한 방법을 함께 적는다', () => {
+  const ctx = createContext();
+  const o = make('integral(sqrt(1-x^2), x, -1, 1)', ctx);
+  const rows = analyzeObject(o, B, ctx).profile;
+  const get = (k) => (rows.find(([a]) => a === k) || [])[1];
+  assert.equal(get('정확값'), 'π/2');
+  assert.match(get('구한 방법'), /부정적분/);
+});
+
+test('계차표가 근거로 붙는다', () => {
+  const ctx = createContext();
+  const o = make('P_n = (n, n^2); 1 <= n <= 8', ctx);
+  const f = analyzeObject(o, B, ctx).findings.find((x) => x.table);
+  assert.ok(f, '계차표가 없다');
+  assert.equal(f.table.constantAt, 2);
+  assert.deepEqual(f.table.rows[2].cells.slice(0, 3), [2, 2, 2]);
+  assert.equal(f.basic, true);           // 표는 사실이지 가설이 아니다
+});
+
+test('어떻게 구했는지 남긴다', () => {
+  const ctx = createContext();
+  const o = make('integral(x^2, x, 0, 1)', ctx);
+  const f = analyzeObject(o, B, ctx).findings[0];
+  assert.match(f.derivation, /부정적분/);
 });

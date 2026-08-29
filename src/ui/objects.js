@@ -8,7 +8,7 @@ import { traceImplicit } from '../engine/implicit.js';
 import { sampleFunction, sampleParametric, samplePolar } from '../engine/sampler.js';
 import { solve1D, solveSystem2D, solveSystemN, intersectRoots, regionMask, polylineIntersections } from '../engine/solvers.js';
 import { newton2D, levenbergMarquardt, trimNum as tn } from '../math/numeric.js';
-import { analyzeSequence } from '../analysis/sequence.js';
+import { analyzeSequence, differenceTable } from '../analysis/sequence.js';
 import { analyzePointSet } from '../analysis/pointset.js';
 import { findInvariant } from '../analysis/invariant.js';
 import { analyzeCurve } from '../analysis/curve.js';
@@ -18,7 +18,7 @@ import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, fa
 import { toPoly } from '../math/poly.js';
 import { ratFromNumber } from '../math/rational.js';
 import { toExact, evalBig, Exact } from '../math/exactval.js';
-import { antiderivative, tanhSinh } from '../math/integrate.js';
+import { antiderivative, tanhSinh, antiderivativeText } from '../math/integrate.js';
 import { limitOf } from '../math/limit.js';
 import * as BFOps from '../math/bigfloat.js';
 import { internalDigits, displayDigits, setPrecision, getPrecision, graphEpsilon } from '../math/precision.js';
@@ -889,6 +889,9 @@ function buildPointSeq(obj, name, idxVar, tuple, ctx, ranges) {
   obj.nRange = given ? [Math.round(given.range[0]), Math.round(given.range[1])] : null;
   if (!obj.domains.has(idxVar)) obj.domains.set(idxVar, 'Z');
   obj.discrete = true;
+  obj.defName = name;
+  // 이름을 등록해 두지 않으면 "P 가 아직 정의되지 않았습니다" 라는 헛경고가 뜬다
+  ctx.defs.set(name, { params: [idxVar], body: tuple, compiled: null });
   obj.label = `${name}(${idxVar}) = (${format(tuple.items[0])}, ${format(tuple.items[1])})`;
   return obj;
 }
@@ -1450,6 +1453,8 @@ function coefX(m) {
  */
 function pointSeqTerms(obj, b, cap = 600) {
   const v = obj.varName;
+  const used = [];
+  obj.usedRange = null;
   const at = (n) => {
     const x = obj.fx({ [v]: n });
     const y = obj.fy({ [v]: n });
@@ -1461,8 +1466,9 @@ function pointSeqTerms(obj, b, cap = 600) {
     const pts = [];
     for (let n = explicit[0]; n <= explicit[1] && pts.length < cap; n++) {
       const p = at(n);
-      if (p) pts.push(p);
+      if (p) { pts.push(p); used.push(n); }
     }
+    obj.usedRange = used.length ? [used[0], used[used.length - 1]] : null;
     return pts;
   }
   if (!isDiscreteSet(set)) {
@@ -1478,7 +1484,11 @@ function pointSeqTerms(obj, b, cap = 600) {
   if (identity) {
     const lo = Math.max(nMin, Math.ceil(b.xmin));
     const hi = Math.floor(b.xmax);
-    for (let n = lo; n <= hi && pts.length < cap; n++) { const p = at(n); if (p) pts.push(p); }
+    for (let n = lo; n <= hi && pts.length < cap; n++) {
+      const p = at(n);
+      if (p) { pts.push(p); used.push(n); }
+    }
+    obj.usedRange = used.length ? [used[0], used[used.length - 1]] : null;
     return pts;
   }
   // 0(또는 1) 에서 양쪽으로 넓혀 가며, 한동안 화면 밖이면 멈춘다.
@@ -1489,12 +1499,14 @@ function pointSeqTerms(obj, b, cap = 600) {
       const n = k;
       if (n < nMin) break;
       const p = at(n);
-      if (p && inView(p)) { pts.push(p); miss = 0; } else if (++miss > 300) break;
+      if (p && inView(p)) { pts.push(p); used.push(n); miss = 0; } else if (++miss > 300) break;
     }
   };
   scan(1);
   if (nMin === -Infinity) scan(-1);
   pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  used.sort((a, c) => a - c);
+  obj.usedRange = used.length ? [used[0], used[used.length - 1]] : null;
   return pts;
 }
 
@@ -1609,8 +1621,97 @@ function residualOf(o) {
   return null;
 }
 
+// ── 대상의 성격 ─────────────────────────────────────────────
+const OBJECT_TYPE = {
+  pointseq: ['이산 점열', true], sequence: ['이산 수열', true],
+  points: ['점의 모임', true], point: ['점', true],
+  function: ['연속 함수 y = f(x)', false], functionY: ['연속 함수 x = f(y)', false],
+  implicit: ['연속 곡선 F(x, y) = 0', false], region: ['영역 (부등식)', false],
+  parametric: ['매개변수 곡선', false], polar: ['극좌표 곡선', false],
+  system: ['연립방정식의 해 (점)', true], equation1d: ['한 변수 방정식의 해 (점열)', true],
+  union: ['해집합의 합집합', false], list: ['리스트', true], regression: ['회귀 모형', false],
+  tangent: ['접선·법선 (직선)', false], integral: ['정적분', false], limit: ['극한', false],
+  value: ['값', false], constant: ['상수', false], setting: ['설정', false],
+};
+
+/**
+ * 분석 보고서의 머리 — 무엇을 다루고 있는지 한눈에.
+ *   객체 유형 / 정의역 / x_n / y_n …
+ * 연속인지 이산인지를 맨 위에 못박아 두는 것이 요점이다.
+ */
+export function objectProfile(obj, ctx) {
+  const rows = [];
+  const known = OBJECT_TYPE[obj.kind];
+  let typeText = known ? known[0] : obj.kind;
+  let discrete = known ? known[1] : false;
+
+  const dx = obj.domains && obj.domains.get('x');
+  const dy = obj.domains && obj.domains.get('y');
+  if (obj.kind === 'implicit' && isDiscreteSet(dx) && isDiscreteSet(dy)) {
+    typeText = '정수해 (격자점)';
+    discrete = true;
+  }
+  const v = obj.varName || obj.substitute || 'x';
+  if ((obj.kind === 'function' || obj.kind === 'functionY')
+      && isDiscreteSet(obj.domains && obj.domains.get(v))) {
+    typeText = '이산 점열 (정의역이 이산인 함수)';
+    discrete = true;
+  }
+  rows.push(['객체 유형', typeText]);
+  rows.push(['연속 / 이산', discrete ? '이산 — 점으로 나타냅니다 (잇지 않습니다)' : '연속 — 곡선으로 잇습니다']);
+
+  // 정의역
+  const dom = [];
+  if (obj.domains) for (const [name, set] of obj.domains) dom.push(`${name} ∈ ${domainText(set)}`);
+  if (obj.nRange) dom.push(`${obj.varName} = ${obj.nRange[0]} … ${obj.nRange[1]}`);
+  if (!dom.length) {
+    if (obj.kind === 'sequence') dom.push(`${obj.name || 'a'}_n 의 n 은 ${obj.n0} 이상의 정수`);
+    else if (discrete) dom.push('정수 전체 (ℤ)');
+    else dom.push('실수 전체 (ℝ) — 정의되는 곳에서만');
+  }
+  rows.push(['정의역', dom.join(', ')]);
+
+  // 좌표별 식
+  if (obj.exprX && obj.exprY) {
+    rows.push([`x_${obj.varName}`, format(obj.exprX)]);
+    rows.push([`y_${obj.varName}`, format(obj.exprY)]);
+  } else if (obj.expr) {
+    rows.push(['식', format(obj.expr)]);
+  } else if (obj.exprAst) {
+    rows.push(['식', format(obj.exprAst)]);
+  }
+  if (obj.kind === 'value' || obj.kind === 'integral' || obj.kind === 'limit') {
+    if (obj.exactText) rows.push(['정확값', obj.exactText]);
+    if (obj.approxText) rows.push(['소수 표기', obj.approxText]);
+    if (obj.method) {
+      rows.push(['구한 방법', {
+        exact: '부정적분을 기호로 구해 F(b) − F(a) 를 정확값으로 계산',
+        antiderivative: '부정적분을 구한 뒤 고정밀 수치로 계산',
+        numeric: `이중지수 구적법 (추정 오차 ${obj.error !== undefined ? obj.error.toExponential(1) : '—'})`,
+      }[obj.method] || obj.method]);
+    }
+    if (obj.valueKind) {
+      rows.push(['계산 층', {
+        exact: '정확값 — 유리수·근호·π 를 그대로 유지',
+        big: `고정밀 수치 — 내부 ${internalDigits()}자리, 표시 ${displayDigits()}자리`,
+        float: '배정밀도',
+      }[obj.valueKind] || obj.valueKind]);
+    }
+  }
+  void ctx;
+  return rows;
+}
+
 // ── 분석 ────────────────────────────────────────────────────
 export function analyzeObject(obj, bounds, ctx) {
+  const out = analyzeInner(obj, bounds, ctx);
+  if (out && !out.profile) {
+    try { out.profile = objectProfile(obj, ctx); } catch { /* 머리말은 없어도 된다 */ }
+  }
+  return out;
+}
+
+function analyzeInner(obj, bounds, ctx) {
   try {
     if (obj.data && obj.data.empty) {
       // 왜 비었는지 말할 수 있으면 말한다 — sin(x+y) = 2 는 화면을 넓혀도 소용없다
@@ -1743,8 +1844,10 @@ export function analyzeObject(obj, bounds, ctx) {
       case 'pointseq': {
         const d = computeObject(obj, bounds);
         // 찾은 규칙을 **쓰지 않은 항**으로 확인하려고 항을 더 만들어 둔다
-        const r = analyzePointSet(d.points, { extra: extraTerms(obj, d.points.length) });
-        const [lo, hi] = obj.nRange || [obj.n0, obj.n0 + 19];
+        const [lo, hi] = obj.usedRange || obj.nRange || [obj.n0, obj.n0 + 19];
+        const r = analyzePointSet(d.points, {
+          extra: extraTerms(obj, d.points.length), n0: lo,
+        });
         return { title: '점열 분석', ...r,
           lead: `${obj.varName} = ${lo}…${hi} 에서 얻은 점 ${d.points.length}개: `
             + d.points.slice(0, 5).map(([x, y]) => `(${pretty(x)}, ${pretty(y)})`).join(', ')
@@ -1759,8 +1862,10 @@ export function analyzeObject(obj, bounds, ctx) {
       case 'tangent': {
         const d = computeObject(obj, bounds);
         const findings = [{
-          type: 'line', title: `${obj.tangentKind}의 방정식`, confidence: 1,
+          type: 'line', title: `${obj.tangentKind}의 방정식`, confidence: 1, basic: true, exact: true,
           detail: d.equation, formula: d.equation,
+          derivation: `y = f′(a)·(x − a) + f(a) 를 **식으로** 세운 뒤 계산했습니다. `
+            + '값으로 굳히지 않으므로 슬라이더를 움직이면 접선도 따라 움직입니다.',
         }];
         if (isFinite(d.slope)) {
           findings.push({ type: 'slope', title: '기울기', confidence: 1,
@@ -1776,10 +1881,22 @@ export function analyzeObject(obj, bounds, ctx) {
         const d = computeObject(obj, bounds);
         const lo = obj.loFn({});
         const hi = obj.hiFn({});
+        const F = antiderivativeText(obj.expr, obj.varName);
+        const shown = obj.exactText || obj.approxText || pretty(d.value);
         const findings = [{
-          type: 'value', title: '정적분 값', confidence: 1,
-          detail: `∫ 의 값은 ${pretty(d.value)} 입니다.`,
-          formula: `∫[${pretty(lo)}, ${pretty(hi)}] ${format(obj.expr)} d${obj.varName} = ${pretty(d.value)}`,
+          type: 'value', title: `정적분 값: ${shown}`, confidence: 1, basic: true, exact: true,
+          detail: obj.method === 'exact'
+            ? '부정적분을 기호로 구해 정확한 값을 얻었습니다.'
+            : obj.method === 'antiderivative'
+              ? '부정적분을 구한 뒤 고정밀 수치로 계산했습니다.'
+              : `부정적분을 구할 수 없어 이중지수 구적법으로 계산했습니다 `
+                + `(추정 오차 ${obj.error !== undefined ? obj.error.toExponential(1) : '—'}).`,
+          formula: `∫[${pretty(lo)}, ${pretty(hi)}] ${format(obj.expr)} d${obj.varName} = ${shown}`,
+          derivation: F
+            ? `부정적분 F(${obj.varName}) = ${F} 를 구해 F(${pretty(hi)}) − F(${pretty(lo)}) 를 `
+              + '정확값 층에서 뺐습니다. 뺄셈까지 기호로 하므로 오차가 끼어들 자리가 없습니다.'
+            : '끝점에서 도함수가 발산해도 견디는 이중지수(tanh–sinh) 구적법을 씁니다. '
+              + '자릿수를 늘려 가며 값이 더 움직이지 않을 때까지 반복하고, 그 움직임을 오차로 잡습니다.',
         }];
         // 부호 있는 넓이와 실제 넓이는 다르다
         const abs = adaptiveAbsArea(obj, lo, hi);
@@ -1793,6 +1910,33 @@ export function analyzeObject(obj, bounds, ctx) {
         return { title: '정적분 분석', findings, summary: `${pretty(d.value)}` };
       }
       case 'region': return analyzeRegion(obj, bounds);
+      case 'value': case 'constant': {
+        const findings = [];
+        if (obj.exactText) {
+          findings.push({
+            type: 'exact', title: `정확값: ${obj.exactText}`, confidence: 1, exact: true,
+            detail: '유리수·근호·π 를 부동소수로 바꾸지 않고 그대로 계산한 값입니다.',
+            formula: `${format(obj.asts[obj.asts.length - 1])} = ${obj.exactText}`,
+            derivation: '식을 유리수 계수의 기호 값으로 옮겨 계산했습니다 '
+              + '(√a·√b = √(ab), 1/√2 = √2/2, 특수각의 삼각함수 등).',
+          });
+        }
+        if (obj.big) {
+          findings.push({
+            type: 'big', title: `소수로 ${displayDigits()}자리: ${obj.approxText}`,
+            confidence: 1, exact: true, basic: true,
+            detail: `안에서는 ${internalDigits()}자리로 들고 있습니다: ${obj.big.toString(internalDigits())}`,
+            derivation: '표시하려고 반올림한 값이 다음 계산에 흘러들지 않도록 '
+              + '내부 값과 표시 값을 따로 둡니다. digits = 40 처럼 자릿수를 바꿀 수 있습니다.',
+          });
+        }
+        if (!findings.length) {
+          findings.push({ type: 'float', title: `값: ${obj.approxText || pretty(obj.value)}`,
+            confidence: 1, basic: true,
+            detail: '정확값도 고정밀 값도 구하지 못해 배정밀도로 계산했습니다.' });
+        }
+        return { title: '값 분석', findings, summary: obj.label };
+      }
       case 'setting':
         return { title: '계산 정밀도', findings: [{
           type: 'precision', title: obj.label, confidence: 1,

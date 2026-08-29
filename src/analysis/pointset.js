@@ -53,7 +53,7 @@ function diffVectors(pts) {
   const slopes = d1.filter(([dx]) => Math.abs(dx) > sc * 1e-12).map(([dx, dy]) => dy / dx);
   if (slopes.length >= 3) {
     const r = analyzeSequence(slopes, { name: 'm' });
-    const top = r.findings.find((f) => f.confidence >= 0.95 && f.type !== 'constant');
+    const top = r.findings.find((f) => f.confidence >= 0.95 && f.type !== 'constant' && !f.basic);
     if (top) {
       out.push({ ...top, title: `이웃을 잇는 기울기의 규칙: ${top.title}`, confidence: 0.8, hypothesis: true });
     }
@@ -127,7 +127,19 @@ export function analyzePointSet(points, opts = {}) {
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
   const sx = spread(xs), sy = spread(ys);
-  const push = (f) => findings.push({ confidence: 0.9, ...f });
+  // 주어진 점을 그대로 읽은 것은 사실, 그 너머를 말하는 것은 가설.
+  // (점 다섯 개가 한 직선 위에 있다는 것은 사실이고,
+  //  "그러므로 이 점열은 직선을 이룬다" 는 것은 가설이다.)
+  const FACTS = ['duplicate', 'grid-x', 'equidistant', 'lattice', 'symmetry', 'collinear'];
+  const push = (f) => {
+    const isFact = f.basic !== undefined ? f.basic : FACTS.includes(f.type);
+    findings.push({
+      confidence: 0.9,
+      ...f,
+      basic: isFact,
+      hypothesis: f.hypothesis !== undefined ? f.hypothesis : !isFact,
+    });
+  };
 
   // 1) x 좌표가 등차인가 → y 를 수열로 분석
   const dx = [];
@@ -138,14 +150,16 @@ export function analyzePointSet(points, opts = {}) {
     push({ type: 'grid-x', title: 'x 좌표가 등간격', confidence: 1,
       detail: `x 가 ${pretty(xs[0])} 부터 간격 ${pretty(dx[0])} 로 일정하게 놓여 있습니다.`,
       formula: `x_k = ${pretty(xs[0])}${signed(dx[0])}·(k−1)`.replace(/ ([+-]) 1·/, ' $1 ') });
-    const seq = analyzeSequence(ys, { name: 'y' });
-    for (const f of seq.findings.slice(0, 3)) {
+    const seq = analyzeSequence(ys, { name: 'y', n0: opts.n0 ?? 1 });
+    const rules = seq.findings.filter((f) => !f.basic).slice(0, 3);
+    const table = seq.findings.find((f) => f.type === 'difftable');
+    for (const f of (table ? [...rules, table] : rules)) {
       push({ ...f, title: `y 값의 규칙: ${f.title}`, source: 'sequence' });
     }
   } else if (ordered && n >= 4) {
     // x 가 고르지 않아도 x 좌표 자체가 규칙을 이룰 수 있다
     // (삼각방정식의 해처럼 갈래 등차수열인 경우가 대표적)
-    const xr = analyzeSequence(xs, { name: 'x' });
+    const xr = analyzeSequence(xs, { name: 'x', n0: opts.n0 ?? 1 });
     for (const f of xr.findings.filter((g) => g.exact).slice(0, 2)) {
       push({ ...f, title: `x 좌표의 규칙: ${f.title}`, source: 'sequence' });
     }
@@ -192,7 +206,7 @@ export function analyzePointSet(points, opts = {}) {
     const dists = [];
     for (let i = 1; i < n; i++) dists.push(Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]));
     const ds = analyzeSequence(dists, { name: 'd' });
-    const top = ds.findings.find((f) => f.confidence >= 0.95 && f.type !== 'constant');
+    const top = ds.findings.find((f) => f.confidence >= 0.95 && f.type !== 'constant' && !f.basic);
     if (top) push({ ...top, title: `이웃한 점 사이 거리의 규칙: ${top.title}`, confidence: 0.8 });
     else if (dists.every((d) => near(d, dists[0], spread(dists)))) {
       push({ type: 'equidistant', title: '이웃한 점 사이 거리가 일정', confidence: 1,
@@ -220,7 +234,7 @@ export function analyzePointSet(points, opts = {}) {
       type: 'invariant', title: `관계식 후보: ${inv.text}`,
       confidence: inv.checked && inv.passed === inv.checked ? 0.95 : 0.8,
       detail: `${conf} 유한한 점으로는 규칙을 하나로 정할 수 없으므로 **가설**입니다.`,
-      formula: inv.text, hypothesis: true,
+      formula: inv.text, hypothesis: true, derivation: inv.derivation,
       verified: inv.checked ? { checked: inv.checked, passed: inv.passed } : null,
     });
   }

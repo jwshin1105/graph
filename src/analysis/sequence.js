@@ -576,6 +576,20 @@ function closedForm(v, n0, roots, nm, nvar) {
 
 function finish(findings, v, n0, nm, opts) {
   // 늘 붙는 기본 성질 — 단조성·성장률·극한 후보
+  // 계차표 — 결론이 어디서 나왔는지 보이는 근거
+  const table = differenceTable(v, n0, nm);
+  if (table) {
+    findings.push({
+      type: 'difftable', title: '계차표', confidence: 1, basic: true, exact: true,
+      detail: table.constantAt !== null
+        ? `제${table.constantAt}계 계차가 일정합니다 — 일반항이 ${table.constantAt}차 다항식이라는 근거입니다.`
+        : '항과 계차를 차례로 늘어놓은 것입니다. 어느 계차도 일정해지지 않았습니다.',
+      table,
+      derivation: '이웃한 항의 차를 거듭 구한 표입니다. 제k계 계차가 일정하면 '
+        + '뉴턴의 전진차분 공식으로 k차 다항식 일반항을 그대로 복원할 수 있습니다.',
+    });
+  }
+
   // 늘 붙는 성질은 "규칙"이 아니라 곁들이는 정보이므로 뒤에 세운다
   for (const f of basicShape(v, nm)) {
     findings.push({ confidence: 0.9, exact: true, basic: true, ...f });
@@ -585,6 +599,37 @@ function finish(findings, v, n0, nm, opts) {
     || (b.exact ? 1 : 0) - (a.exact ? 1 : 0) || b.confidence - a.confidence);
   const summary = summarize(findings, v, n0, nm);
   return { findings, terms: v, n0, name: nm, summary, opts };
+}
+
+/**
+ * 계차표 — n, aₙ, Δ, Δ², … 를 표로.
+ * "2차 다항식이다" 같은 결론이 **어디서 나왔는지** 바로 보이게 하려는 것이다.
+ * @returns {{header:string[], rows:{label:string, cells:(number|null)[]}[], constantAt:number|null}}
+ */
+export function differenceTable(values, n0 = 1, name = 'a', maxLevel = 5) {
+  const v = values.filter((x) => isFinite(x));
+  if (v.length < 2) return null;
+  const width = Math.min(v.length, 12);
+  const header = Array.from({ length: width }, (_, i) => String(n0 + i));
+  const rows = [{ label: `${name}_n`, cells: v.slice(0, width) }];
+  let cur = v;
+  let constantAt = null;
+  const sc = scaleOf(v);
+  for (let k = 1; k <= maxLevel && cur.length > 1; k++) {
+    const next = [];
+    for (let i = 1; i < cur.length; i++) next.push(cur[i] - cur[i - 1]);
+    rows.push({
+      label: k === 1 ? 'Δ' : `Δ^${k}`,
+      cells: Array.from({ length: width }, (_, i) => (i < next.length ? next[i] : null)),
+    });
+    cur = next;
+    if (constantAt === null && cur.length >= 2
+        && cur.every((x) => Math.abs(x - cur[0]) <= sc * 1e-9)) {
+      constantAt = k;
+      break;
+    }
+  }
+  return { header, rows, constantAt };
 }
 
 /**

@@ -906,6 +906,15 @@ class App {
       n.textContent = `ℹ ${res.note}`;
       host.append(n);
     }
+    // 무엇을 다루고 있는지 — 객체 유형·정의역·좌표별 식
+    if (res.profile && res.profile.length) {
+      const p = document.createElement('table');
+      p.className = 'an-profile';
+      p.innerHTML = res.profile
+        .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`)
+        .join('');
+      host.append(p);
+    }
     if (res.lead || res.summary) {
       const l = document.createElement('div');
       l.className = 'an-lead';
@@ -917,17 +926,35 @@ class App {
       host.innerHTML += '<div class="an-empty">뚜렷한 규칙을 찾지 못했습니다.<br />범위를 넓히거나 항을 더 주면 더 잘 찾습니다.</div>';
       return;
     }
+    // 가설이 하나라도 있으면 그게 무슨 뜻인지 먼저 밝힌다
+    if (findings.some((f) => f.hypothesis)) {
+      const n = document.createElement('div');
+      n.className = 'an-note';
+      n.textContent = 'ℹ 아래에서 규칙 이라고 적은 것은 모두 주어진 데이터와 맞는 후보(가설)입니다. '
+        + '유한한 데이터만으로는 규칙이 하나로 정해지지 않습니다. '
+        + '가능한 경우 분석에 쓰지 않은 항을 더 만들어 확인한 결과를 함께 적었습니다.';
+      host.append(n);
+    }
     for (const f of findings) {
       const c = document.createElement('div');
       c.className = 'card' + ((f.confidence ?? 1) < 0.85 ? ' low' : '');
+      const badge = f.hypothesis ? '<span class="badge guess">가설</span>'
+        : f.basic ? '<span class="badge fact">사실</span>' : '';
+      const ver = f.verified
+        ? `<span class="badge ${f.verified.passed === f.verified.checked ? 'ok' : 'bad'}">`
+          + `검증 ${f.verified.passed}/${f.verified.checked}</span>` : '';
       c.innerHTML =
-        `<div class="card-t"><span>${escapeHtml(f.title)}</span>` +
+        `<div class="card-t"><span>${badge}${ver}${escapeHtml(f.title)}</span>` +
         `<span class="conf">확신도 ${Math.round((f.confidence ?? 1) * 100)}%</span></div>` +
         (f.detail ? `<div class="card-d">${escapeHtml(f.detail)}</div>` : '') +
         (f.formula ? `<div class="formula">${escapeHtml(f.formula)}</div>` : '') +
+        (f.table ? diffTableHtml(f.table) : '') +
         (f.extra ? `<div class="card-d">${escapeHtml(f.extra)}</div>` : '') +
         (f.next && f.next.every((x) => typeof x === 'number' && isFinite(x))
           ? `<div class="next">다음 항 예측 → ${f.next.map((x) => pretty(x)).join(',  ')}</div>` : '') +
+        (f.derivation || f.steps
+          ? `<details class="how"><summary>어떻게 구했나</summary><div>`
+            + escapeHtml(f.derivation || (f.steps || []).join(' ')) + '</div></details>' : '') +
         (f.hint ? `<div class="hint">${escapeHtml(f.hint)}</div>` : '');
       host.append(c);
     }
@@ -1309,6 +1336,16 @@ const KIND_LABEL = {
   union: '합집합', list: '리스트', regression: '회귀', pointseq: '점열',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
 };
+
+/** 계차표를 표로 */
+function diffTableHtml(t) {
+  const cell = (v) => (v === null || v === undefined ? '' : escapeHtml(pretty(v)));
+  const head = `<tr><th></th>${t.header.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`;
+  const body = t.rows.map((r) =>
+    `<tr><th>${escapeHtml(r.label)}</th>${r.cells.map((c) => `<td>${cell(c)}</td>`).join('')}</tr>`)
+    .join('');
+  return `<table class="difftable">${head}${body}</table>`;
+}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>

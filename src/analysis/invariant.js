@@ -148,6 +148,9 @@ export function findInvariant(points, check = [], opts = {}) {
       text: relationText(coeffs, basis),
       residual: rms,
       exact: true,
+      derivation: `총차수 ${d} 이하의 단항식 ${m}개를 늘어놓고, 점들을 넣어 만든 그램 행렬의 `
+        + '가장 작은 고유벡터를 구했습니다. 그 계수를 유리수로 되돌린 뒤, 되돌린 식이 '
+        + '모든 점에서 정말 0 이 되는지 다시 확인한 것만 관계로 인정합니다.',
       checked: others.length,
       passed,
       evaluate: evalAt,
