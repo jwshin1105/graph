@@ -3,6 +3,7 @@
 // 충분히 빠르다.
 
 import { FUNCTIONS, CONSTANTS, SPECIAL_FORMS } from './functions.js';
+import { tanhSinh } from './integrate.js';
 
 export class EvalError2 extends Error {}
 
@@ -264,7 +265,10 @@ function buildSpecial(node, ctx) {
     return (env) => {
       const sub = Object.create(env || null);
       const f = (t) => { sub[vname] = t; return body(sub); };
-      return simpson(f, lo(env), hi(env));
+      // 이중지수 구적법 — 끝점에서 도함수가 발산하는 적분(√(1−x²))도 기계정밀도까지 간다.
+      // 적응 심프슨은 같은 적분에서 상대오차가 4×10⁻¹⁰ 까지 벌어진다.
+      const r = tanhSinh(f, lo(env), hi(env));
+      return isFinite(r.value) ? r.value : simpson(f, lo(env), hi(env));
     };
   }
   if (a.length < 4) return () => NaN;

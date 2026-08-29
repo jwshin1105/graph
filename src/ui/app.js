@@ -1305,7 +1305,7 @@ const KIND_LABEL = {
   system: '연립방정식', equation1d: '방정식', points: '점열', point: '점',
   sequence: '수열', parametric: '매개변수', polar: '극좌표', value: '값',
   setting: '설정',
-  tangent: '접선·법선', integral: '정적분',
+  tangent: '접선·법선', integral: '정적분', limit: '극한',
   union: '합집합', list: '리스트', regression: '회귀', pointseq: '점열',
   constant: '상수', defined: '정의', statement: '판정', empty: '빈 칸',
 };

@@ -350,6 +350,40 @@ const TRIG_TABLE = (() => {
 void S;
 
 /**
+ * 역삼각함수의 특수값. asin(1) = π/2, atan(1) = π/4 …
+ * ∫√(1−x²) 를 끝점에서 재는 데 꼭 필요하다.
+ */
+function invTrigExact(name, v) {
+  const half = new Rat(1n, 2n);
+  const P = Exact.PI;
+  const key = v.toString();
+  const table = {
+    asin: {
+      '-1': P.mul(Exact.rat(half.neg())), '-√3/2': P.mul(Exact.rat(new Rat(-1n, 3n))),
+      '-√2/2': P.mul(Exact.rat(new Rat(-1n, 4n))), '-1/2': P.mul(Exact.rat(new Rat(-1n, 6n))),
+      0: Exact.zero(), '1/2': P.mul(Exact.rat(new Rat(1n, 6n))),
+      '√2/2': P.mul(Exact.rat(new Rat(1n, 4n))), '√3/2': P.mul(Exact.rat(new Rat(1n, 3n))),
+      1: P.mul(Exact.rat(half)),
+    },
+    acos: {
+      '-1': P, '-√3/2': P.mul(Exact.rat(new Rat(5n, 6n))),
+      '-√2/2': P.mul(Exact.rat(new Rat(3n, 4n))), '-1/2': P.mul(Exact.rat(new Rat(2n, 3n))),
+      0: P.mul(Exact.rat(half)), '1/2': P.mul(Exact.rat(new Rat(1n, 3n))),
+      '√2/2': P.mul(Exact.rat(new Rat(1n, 4n))), '√3/2': P.mul(Exact.rat(new Rat(1n, 6n))),
+      1: Exact.zero(),
+    },
+    atan: {
+      '-√3': P.mul(Exact.rat(new Rat(-1n, 3n))), '-1': P.mul(Exact.rat(new Rat(-1n, 4n))),
+      '-√3/3': P.mul(Exact.rat(new Rat(-1n, 6n))), 0: Exact.zero(),
+      '√3/3': P.mul(Exact.rat(new Rat(1n, 6n))), 1: P.mul(Exact.rat(new Rat(1n, 4n))),
+      '√3': P.mul(Exact.rat(new Rat(1n, 3n))),
+    },
+  }[name];
+  const hit = table && table[key];
+  return hit === undefined ? null : hit;
+}
+
+/**
  * AST 를 정확값으로. 정확히 다룰 수 없으면 null.
  * @param {object} node
  * @param {Map<string, Exact>} [consts]  이름 → 정확값
@@ -425,6 +459,8 @@ function callExact(name, args) {
       return isFinite(v) ? (v < 0 ? a.neg() : a) : null;
     }
     case 'sin': case 'cos': case 'tan': return trigExact(name, a);
+    case 'asin': case 'acos': case 'atan': case 'arcsin': case 'arccos': case 'arctan':
+      return invTrigExact(name.replace('arc', 'a'), a);
     case 'exp': return a.isZero ? Exact.int(1) : (isOne(a) ? Exact.E : null);
     case 'ln': case 'log': {
       if (name === 'log' && b) return null;
@@ -513,7 +549,23 @@ export function evalBig(node, consts = new Map(), p = 30) {
           case 'sin': return BF.sin(a, wp);
           case 'cos': return BF.cos(a, wp);
           case 'tan': return BF.tan(a, wp);
-          case 'atan': return BF.atan(a, wp);
+          case 'atan': case 'arctan': return BF.atan(a, wp);
+          case 'asin': case 'arcsin': {
+            // asin x = atan(x / √(1−x²)),  |x| = 1 이면 ±π/2
+            const one = B.fromInt(1);
+            const d = BF.sub(one, BF.mul(a, a, wp), wp);
+            if (d.s === 0) return BF.mul(BF.PI(wp), B.parse(a.s < 0 ? '-0.5' : '0.5'), wp);
+            const r = BF.sqrt(d, wp);
+            return r ? BF.atan(BF.div(a, r, wp), wp) : null;
+          }
+          case 'acos': case 'arccos': {
+            const one = B.fromInt(1);
+            const d = BF.sub(one, BF.mul(a, a, wp), wp);
+            const half = BF.mul(BF.PI(wp), B.parse('0.5'), wp);
+            if (d.s === 0) return a.s < 0 ? BF.PI(wp) : B.zero();
+            const r = BF.sqrt(d, wp);
+            return r ? BF.sub(half, BF.atan(BF.div(a, r, wp), wp), wp) : null;
+          }
           case 'exp': return BF.exp(a, wp);
           case 'ln': return BF.ln(a, wp);
           case 'log': {

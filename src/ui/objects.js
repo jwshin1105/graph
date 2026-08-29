@@ -17,6 +17,9 @@ import { classifyConicExact, conicEquation, polyRootsExact, conicTransitions, fa
 import { toPoly } from '../math/poly.js';
 import { ratFromNumber } from '../math/rational.js';
 import { toExact, evalBig, Exact } from '../math/exactval.js';
+import { antiderivative, tanhSinh } from '../math/integrate.js';
+import { limitOf } from '../math/limit.js';
+import * as BFOps from '../math/bigfloat.js';
 import { internalDigits, displayDigits, setPrecision, getPrecision } from '../math/precision.js';
 import { pretty, trimNum } from '../math/numeric.js';
 
@@ -194,6 +197,13 @@ function classify(obj, asts, ctx) {
   if (main.type === 'call' && ['tangent', 'normal'].includes(main.name)
       && main.args && main.args.length === 2) {
     const built = buildTangent(obj, main, ctx);
+    if (built) return built;
+  }
+
+  // ── 극한: limit(sin(x)/x, x, 0)
+  if (main.type === 'call' && ['limit', 'lim'].includes(main.name) && main.args
+      && main.args.length === 3) {
+    const built = buildLimit(obj, main, ctx);
     if (built) return built;
   }
 
@@ -803,6 +813,82 @@ function buildRegression(obj, main, ctx) {
 }
 
 // ── 미적분 ──────────────────────────────────────────────────
+/**
+ * 정적분을 되도록 정확하게.
+ *   1. 부정적분 F 를 기호로 구해 F(b) − F(a) 를 정확값으로   ∫₀¹x²dx = 1/3
+ *   2. 정확값이 안 되면 F 를 고정밀 수치로
+ *   3. F 자체가 없으면 이중지수 구적법 + 오차 추정
+ */
+function integrateExactly(obj, ctx) {
+  const v = obj.varName;
+  const ip = internalDigits();
+  const dp = displayDigits();
+  const consts = exactValueConstants(ctx);
+  obj.antiderivative = null;
+  obj.method = 'numeric';
+
+  const F = antiderivative(obj.expr, v);
+  if (F) {
+    obj.antiderivative = F;
+    const at = (bound) => substAst(F, v, bound);
+    const hi = at(obj.hiAst);
+    const lo = at(obj.loAst);
+    let ex = null;
+    try {
+      const a = toExact(hi, consts);
+      const b = toExact(lo, consts);
+      ex = a && b ? a.sub(b) : null;
+    } catch { ex = null; }
+    if (ex) {
+      obj.exact = ex;
+      obj.exactText = ex.toString();
+      const big = ex.toBig(ip);
+      obj.big = big;
+      obj.value = big ? big.toNumber() : obj.valueFn({});
+      obj.approxText = big ? big.toString(dp) : pretty(obj.value);
+      obj.error = 0;
+      obj.method = 'exact';
+      return;
+    }
+    try {
+      const a = evalBig(hi, consts, ip);
+      const b = evalBig(lo, consts, ip);
+      if (a && b) {
+        const { sub: bsub } = bigOps();
+        const d = bsub(a, b, ip);
+        obj.big = d;
+        obj.value = d.toNumber();
+        obj.approxText = d.toString(dp);
+        obj.error = Math.abs(obj.value) * Math.pow(10, -ip + 1);
+        obj.method = 'antiderivative';
+        return;
+      }
+    } catch { /* 아래 수치법으로 */ }
+  }
+
+  const lo = obj.loFn({});
+  const hi = obj.hiFn({});
+  const r = tanhSinh((t) => obj.fn({ [v]: t }), lo, hi);
+  obj.value = r.value;
+  obj.error = r.error;
+  obj.evals = r.evals;
+  obj.approxText = trimNum(r.value, Math.max(3, Math.min(dp, errDigits(r))));
+  obj.method = 'numeric';
+}
+
+/** 추정 오차가 보장하는 자릿수 */
+function errDigits(r) {
+  if (!(r.error > 0)) return 15;
+  const rel = r.error / Math.max(1e-300, Math.abs(r.value));
+  return Math.max(2, Math.floor(-Math.log10(rel)) - 1);
+}
+
+let _bigOps = null;
+function bigOps() {
+  if (!_bigOps) _bigOps = BFOps;
+  return _bigOps;
+}
+
 /** 식 안의 변수 v 를 다른 식으로 바꿔 끼운다 */
 function substAst(node, v, repl) {
   const walk = (n) => {
@@ -865,6 +951,34 @@ function buildTangent(obj, main, ctx) {
   return obj;
 }
 
+/** 극한 — 대입 → 로피탈 → 수치 순으로 */
+function buildLimit(obj, main, ctx) {
+  const [body, vNode, atNode] = main.args;
+  const v = vNode.type === 'var' ? vNode.name : 'x';
+  let at;
+  try { at = compile(atNode, ctx)({}); } catch { return null; }
+  if (Number.isNaN(at)) return null;
+  const fn = compile(body, ctx);
+  const r = limitOf(body, v, at, {
+    fn, consts: exactValueConstants(ctx), digits: internalDigits(),
+  });
+  if (!r) return null;
+  obj.kind = 'limit';
+  obj.varName = v;
+  obj.expr = body;
+  obj.fn = fn;
+  obj.at = at;
+  obj.limit = r;
+  obj.value = r.value;
+  obj.exact = r.exact;
+  obj.exactText = r.exact ? r.exact.toString() : null;
+  obj.approxText = r.text;
+  obj.valueKind = r.exact ? 'exact' : 'big';
+  const atText = at === Infinity ? '∞' : at === -Infinity ? '−∞' : pretty(at);
+  obj.label = `lim(${v} → ${atText}) ${format(body)} = ${r.text}`;
+  return obj;
+}
+
 /** 정적분 — 값과 함께 넓이를 칠한다 */
 function buildIntegral(obj, main, ctx) {
   const a = main.args;
@@ -881,8 +995,10 @@ function buildIntegral(obj, main, ctx) {
   obj.loFn = compile(a[hasVar ? 2 : 1], ctx);
   obj.hiFn = compile(a[hasVar ? 3 : 2], ctx);
   obj.valueFn = compile(main, ctx);
-  obj.value = obj.valueFn({});
-  obj.label = `∫ ${format(body)} d${v} = ${pretty(obj.value)}`;
+  obj.loAst = a[hasVar ? 2 : 1];
+  obj.hiAst = a[hasVar ? 3 : 2];
+  integrateExactly(obj, ctx);
+  obj.label = `∫ ${format(body)} d${v} = ${obj.exactText || obj.approxText}`;
   return obj;
 }
 
@@ -1007,6 +1123,17 @@ export function computeObject(obj, bounds, opts = {}) {
         polylines: r.polylines, points: pts, isolated: pts,
         labels: pts.length ? [{ x: x0, y: y0, text: eq }] : [],
         equation: eq, slope: m, at: x0,
+      };
+    }
+    case 'limit': {
+      const v = obj.varName;
+      const f = (t) => obj.fn({ [v]: t });
+      const r = sampleFunction(f, b.xmin, b.xmax, { ymin: b.ymin, ymax: b.ymax });
+      const pts = isFinite(obj.at) && isFinite(obj.value) ? [[obj.at, obj.value]] : [];
+      return {
+        polylines: r.polylines, points: pts, isolated: pts, hollow: true,
+        labels: pts.length ? [{ x: obj.at, y: obj.value, text: obj.approxText }] : [],
+        value: obj.value, equation: obj.exactText || obj.approxText,
       };
     }
     case 'integral': {
