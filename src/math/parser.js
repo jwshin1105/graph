@@ -27,7 +27,7 @@ export function tokenize(src, knownNames = new Set()) {
     ...knownNames,
     ...Object.keys(FUNCTIONS),
     ...Object.keys(CONSTANTS),
-    'and', 'or', 'not', 'for',
+    'and', 'or', 'not', 'for', 'in',
   ]);
   const tokens = [];
   let i = 0;
@@ -72,6 +72,8 @@ export function tokenize(src, knownNames = new Set()) {
         if (known.has(cand)) { matched = cand; break; }
       }
       if (!matched) matched = run[0];
+      // 'in' 은 이름이 아니라 정의역을 가리키는 연산자다 (n in Z)
+      if (matched === 'in') { push('op', '∈', i); i += 2; continue; }
       push('name', matched, i);
       i += matched.length;
       continue;
@@ -95,6 +97,7 @@ export function tokenize(src, knownNames = new Set()) {
     if (c === '…') { push('punct', '...', i); i++; continue; }
     if (c === '~' || c === '≈') { push('op', '~', i); i++; continue; }
     if ('()[]{},|_:'.includes(c)) { push('punct', c, i); i++; continue; }
+    if (c === '∈' || c === '∊') { push('op', '∈', i); i++; continue; }
     if (c === '∧') { push('name', 'and', i); i++; continue; }
     if (c === '∨') { push('name', 'or', i); i++; continue; }
     if (c === '√') { push('name', 'sqrt', i); i++; continue; }
@@ -160,6 +163,13 @@ class Parser {
   parseCompare() {
     const left = this.parseAdd();
     const tk = this.peek();
+    // n ∈ Z — 정의역 지정. 'in' 이라고 적어도 같다
+    const isIn = (t) => t.type === 'op' && t.value === '∈';
+    if (isIn(tk)) {
+      this.next();
+      const set = this.parseAdd();
+      return { type: 'cmp', op: '∈', a: left, b: set };
+    }
     if (tk.type === 'op' && COMPARE.has(tk.value)) {
       this.next();
       const mid = this.parseAdd();

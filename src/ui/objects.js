@@ -27,6 +27,8 @@ const ANGLE_VARS = new Set(['t', 'θ', 'theta']);
 const isBuiltin = (n) => Object.prototype.hasOwnProperty.call(FUNCTIONS, n);
 
 export const SETTING_NAMES = ['precision', 'digits'];
+// 한 낱말로 읽혀야 하는 표시어 (모르는 이름이면 c·o·n·n·e·c·t 로 쪼개진다)
+export const MARKER_NAMES = ['connect'];
 
 export function createContext() {
   return makeContext();
@@ -36,7 +38,7 @@ export function createContext() {
 export function knownNames(ctx) {
   // 설정 이름은 한 낱말로 읽어야 한다. 모르는 이름이면 p·r·e·c·i·s·i·o·n 으로 쪼개진다.
   return new Set([...ctx.defs.keys(), ...ctx.seqs.keys(), 'x', 'y', 'n', 'k', 't', 'r', 'θ',
-    'and', 'or', ...SETTING_NAMES]);
+    'and', 'or', ...SETTING_NAMES, ...MARKER_NAMES]);
 }
 
 /**
@@ -76,14 +78,22 @@ export function createObject(source, ctx, id, colorIndex) {
 }
 
 function classify(obj, asts, ctx) {
-  // ';' 로 붙인 조각 중 "0 <= t <= 6π" 꼴은 매개변수 범위 지정으로 떼어 낸다
+  // ';' 로 붙인 조각 중 "0 <= t <= 6π" 꼴은 매개변수 범위 지정으로,
+  // "n ∈ Z" 꼴은 정의역 지정으로 떼어 낸다
   const ranges = [];
+  const domains = new Map();
+  let connect = false;
   const rest = asts.filter((a) => {
+    if (a.type === 'var' && MARKER_NAMES.includes(a.name)) { connect = true; return false; }
     const r = asRange(a);
     if (r) { ranges.push(r); return false; }
+    const d = collectDomains(a, domains);
+    if (d) return false;
     return true;
   });
   if (rest.length) asts = rest;
+  obj.domains = domains;
+  obj.connect = connect;
   const main = asts[asts.length - 1];
   obj.asts = asts;
   obj.ranges = ranges;
@@ -116,16 +126,7 @@ function classify(obj, asts, ctx) {
   if (ptSeq) {
     const name = ptSeq.a.base.type === 'var' ? ptSeq.a.base.name : 'P';
     const idxVar = ptSeq.a.index.type === 'var' ? ptSeq.a.index.name : 'n';
-    obj.kind = 'pointseq';
-    obj.name = name;
-    obj.varName = idxVar;
-    obj.fx = compile(ptSeq.b.items[0], ctx);
-    obj.fy = compile(ptSeq.b.items[1], ctx);
-    obj.n0 = 1;
-    const given = ranges.find((r) => r.name === idxVar);
-    obj.nRange = given ? [Math.round(given.range[0]), Math.round(given.range[1])] : null;
-    obj.label = `${name}_${idxVar} = (${format(ptSeq.b.items[0])}, ${format(ptSeq.b.items[1])})`;
-    return obj;
+    return buildPointSeq(obj, name, idxVar, ptSeq.b, ctx, ranges);
   }
 
   // ── 수열 정의: a_n = …  (앞선 조각들은 초기값 a_1 = 1 처럼 취급)
@@ -143,6 +144,11 @@ function classify(obj, asts, ctx) {
     // 조용히 넘기면 사용자가 재정의한 줄 알기 쉬우므로 그렇다고 알린다.
     obj.note = `${main.a.name} 는 이미 정의되어 있어서 이 줄은 방정식으로 읽었습니다. `
       + `다시 정의하려면 원래 줄을 고쳐 주세요.`;
+  }
+  // P(n) = (n, sin n) — 값이 점인 함수 정의는 점열이다
+  if (looksLikeDef && main.a.args.length === 1
+      && main.b.type === 'tuple' && main.b.items.length === 2) {
+    return buildPointSeq(obj, main.a.name, main.a.args[0].name, main.b, ctx, ranges);
   }
   if (looksLikeDef && !ctx.defs.has(main.a.name)) {
     const name = main.a.name;
@@ -471,6 +477,42 @@ function classify(obj, asts, ctx) {
   obj.error = '어떤 그래프인지 판단하지 못했습니다.';
   return obj;
 }
+
+/** 집합 이름 → 정의역 종류 */
+const DOMAIN_SETS = {
+  Z: 'Z', 'ℤ': 'Z', integers: 'Z', 정수: 'Z',
+  N: 'N', 'ℕ': 'N', naturals: 'N', 자연수: 'N',
+  Q: 'Q', 'ℚ': 'Q', rationals: 'Q', 유리수: 'Q',
+  R: 'R', 'ℝ': 'R', reals: 'R', 실수: 'R',
+};
+
+/**
+ * "n ∈ Z" 꼴을 모은다. and 로 이어 붙인 것도 함께 (x ∈ Z ∧ y ∈ Z).
+ * @returns {boolean} 이 조각이 정의역 지정뿐이었는가
+ */
+export function collectDomains(node, into) {
+  if (!node) return false;
+  if (node.type === 'logic' && node.op === 'and') {
+    const a = collectDomains(node.a, into);
+    const b = collectDomains(node.b, into);
+    return a && b;
+  }
+  if (node.type !== 'cmp' || node.op !== '∈') return false;
+  if (node.a.type !== 'var') return false;
+  const setName = node.b.type === 'var' ? node.b.name : null;
+  const set = setName && DOMAIN_SETS[setName];
+  if (!set) return false;
+  into.set(node.a.name, set);
+  return true;
+}
+
+/** 정의역이 이산인가 (정수·자연수) */
+export const isDiscreteSet = (set) => set === 'Z' || set === 'N';
+
+/** 정의역 이름을 사람 말로 */
+export const domainText = (set) => ({
+  Z: '정수 전체 (ℤ)', N: '자연수 (ℕ)', Q: '유리수 (ℚ)', R: '실수 (ℝ)',
+}[set] || set);
 
 /** "a <= t <= b" 를 [a, b] 범위로 해석 (매개변수 범위·슬라이더 범위에 함께 쓰인다) */
 function asRange(node) {
@@ -812,6 +854,24 @@ function buildRegression(obj, main, ctx) {
   return obj;
 }
 
+/** 점열 — P_n = (x_n, y_n) 도 P(n) = (f(n), g(n)) 도 같은 대상이다 */
+function buildPointSeq(obj, name, idxVar, tuple, ctx, ranges) {
+  obj.kind = 'pointseq';
+  obj.name = name;
+  obj.varName = idxVar;
+  obj.exprX = tuple.items[0];
+  obj.exprY = tuple.items[1];
+  obj.fx = compile(tuple.items[0], ctx);
+  obj.fy = compile(tuple.items[1], ctx);
+  obj.n0 = 1;
+  const given = ranges.find((r) => r.name === idxVar);
+  obj.nRange = given ? [Math.round(given.range[0]), Math.round(given.range[1])] : null;
+  if (!obj.domains.has(idxVar)) obj.domains.set(idxVar, 'Z');
+  obj.discrete = true;
+  obj.label = `${name}(${idxVar}) = (${format(tuple.items[0])}, ${format(tuple.items[1])})`;
+  return obj;
+}
+
 // ── 미적분 ──────────────────────────────────────────────────
 /**
  * 정적분을 되도록 정확하게.
@@ -1081,6 +1141,15 @@ export function computeObject(obj, bounds, opts = {}) {
     case 'function': {
       const v = obj.substitute || 'x';
       const f = (x) => obj.fn({ [v]: x });
+      // 정의역이 정수·자연수면 곡선이 아니라 점열이다 (y = sin x, x ∈ Z)
+      const dset = obj.domains && obj.domains.get(v);
+      if (isDiscreteSet(dset)) {
+        const pts = discretePoints((n) => n, f, dset, b, obj.nRange);
+        return {
+          points: pts, isolated: pts, empty: pts.length === 0,
+          polylines: obj.connect && pts.length >= 2 ? [pts.flat()] : [],
+        };
+      }
       // 값이 리스트면 (y = [1,2,3]x 처럼) 한 번에 여러 곡선을 그린다.
       // 정의역이 제한된 식은 가운데 한 점만 봐서는 알 수 없으므로 여러 곳을 짚어 본다.
       let probe = null;
@@ -1162,6 +1231,13 @@ export function computeObject(obj, bounds, opts = {}) {
       return { polylines: r.polylines.map(swapXY), points: [] };
     }
     case 'implicit': {
+      // x, y 가 모두 정수·자연수면 곡선이 아니라 **정수해**를 찾는 문제다
+      const dx = obj.domains && obj.domains.get('x');
+      const dy = obj.domains && obj.domains.get('y');
+      if (isDiscreteSet(dx) && isDiscreteSet(dy)) {
+        const pts = latticeSolutions(obj, b, dx, dy);
+        return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0, lattice: true };
+      }
       const r = traceImplicit((x, y) => obj.f({ x, y }), b, opts);
       return {
         polylines: r.polylines, points: r.points, isolated: r.points,
@@ -1271,16 +1347,14 @@ export function computeObject(obj, bounds, opts = {}) {
     case 'points':
       return { points: obj.points, isolated: obj.points, polylines: [] };
     case 'pointseq': {
-      const [lo, hi] = obj.nRange || [obj.n0, obj.n0 + 19];
-      const v = obj.varName;
-      const pts = [];
-      for (let n = lo; n <= hi && pts.length < 400; n++) {
-        const x = obj.fx({ [v]: n });
-        const y = obj.fy({ [v]: n });
-        if (isFinite(x) && isFinite(y)) pts.push([x, y]);
-      }
+      const pts = pointSeqTerms(obj, b);
       obj.points = pts;
-      return { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
+      const out = { points: pts, isolated: pts, polylines: [], empty: pts.length === 0 };
+      // 이산 점열은 잇지 않는다. 사용자가 "connect" 라고 밝혔을 때만 잇는다
+      if (obj.connect && pts.length >= 2) {
+        out.polylines = [pts.flat()];
+      }
+      return out;
     }
     case 'sequence': {
       const terms = sequenceTerms(obj, b);
@@ -1343,6 +1417,98 @@ function coefX(m) {
   const q = t.slice(slash + 1);
   const head = p === '1' ? 'x' : p === '-1' ? '-x' : `${p}x`;
   return `${head}/${q}`;
+}
+
+/**
+ * 점열의 항을 화면 범위에 맞춰 필요한 만큼만 구한다.
+ *
+ * n 을 1부터 25까지 고정으로 돌리면, 화면을 옮겼을 때 보이는 자리의 항이 없다.
+ * x_n = n 처럼 x 가 n 을 그대로 쓰면 화면의 x 범위가 곧 n 의 범위다.
+ * 그렇지 않으면 0 에서 바깥으로 넓혀 가며 화면에 드는 항만 모은다.
+ */
+function pointSeqTerms(obj, b, cap = 600) {
+  const v = obj.varName;
+  const at = (n) => {
+    const x = obj.fx({ [v]: n });
+    const y = obj.fy({ [v]: n });
+    return isFinite(x) && isFinite(y) ? [x, y] : null;
+  };
+  const set = obj.domains && obj.domains.get(v);
+  const explicit = obj.nRange;
+  if (explicit) {
+    const pts = [];
+    for (let n = explicit[0]; n <= explicit[1] && pts.length < cap; n++) {
+      const p = at(n);
+      if (p) pts.push(p);
+    }
+    return pts;
+  }
+  if (!isDiscreteSet(set)) {
+    const pts = [];
+    for (let n = obj.n0; n < obj.n0 + 20; n++) { const p = at(n); if (p) pts.push(p); }
+    return pts;
+  }
+  const nMin = set === 'N' ? 1 : -Infinity;
+  // x_n = n 인가 — 세 곳에서 맞으면 그렇다고 본다
+  const identity = [0, 1, 5].every((n) => Math.abs(obj.fx({ [v]: n }) - n) < 1e-12);
+  const inView = ([x, y]) => x >= b.xmin && x <= b.xmax && y >= b.ymin && y <= b.ymax;
+  const pts = [];
+  if (identity) {
+    const lo = Math.max(nMin, Math.ceil(b.xmin));
+    const hi = Math.floor(b.xmax);
+    for (let n = lo; n <= hi && pts.length < cap; n++) { const p = at(n); if (p) pts.push(p); }
+    return pts;
+  }
+  // 0(또는 1) 에서 양쪽으로 넓혀 가며, 한동안 화면 밖이면 멈춘다.
+  // (cos n, sin n) 처럼 늘 화면 안인 점열도 있으므로 개수 상한이 필요하다
+  const scan = (dir) => {
+    let miss = 0;
+    for (let k = dir > 0 ? 0 : -1; Math.abs(k) < 100000 && pts.length < cap; k += dir) {
+      const n = k;
+      if (n < nMin) break;
+      const p = at(n);
+      if (p && inView(p)) { pts.push(p); miss = 0; } else if (++miss > 300) break;
+    }
+  };
+  scan(1);
+  if (nMin === -Infinity) scan(-1);
+  pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  return pts;
+}
+
+/** 이산 정의역 위의 함수값 — y = sin x, x ∈ Z */
+function discretePoints(fx, fy, set, b, explicit, cap = 4000) {
+  const lo = explicit ? explicit[0] : Math.max(set === 'N' ? 1 : -Infinity, Math.ceil(b.xmin));
+  const hi = explicit ? explicit[1] : Math.floor(b.xmax);
+  const pts = [];
+  for (let n = lo; n <= hi && pts.length < cap; n++) {
+    const x = fx(n);
+    const y = fy(n);
+    if (isFinite(x) && isFinite(y)) pts.push([x, y]);
+  }
+  return pts;
+}
+
+/**
+ * 정수해 — x, y 가 모두 정수인 해.
+ * 화면 안의 격자점을 훑되, 각 x 마다 y 를 이분법으로 좁혀 잡는 편이 훨씬 빠르지만
+ * 여기서는 화면에 보이는 만큼만 다루므로 곧이곧대로 훑는다.
+ */
+function latticeSolutions(obj, b, dx, dy, cap = 2000) {
+  const x0 = Math.max(dx === 'N' ? 1 : -Infinity, Math.ceil(b.xmin));
+  const x1 = Math.floor(b.xmax);
+  const y0 = Math.max(dy === 'N' ? 1 : -Infinity, Math.ceil(b.ymin));
+  const y1 = Math.floor(b.ymax);
+  const pts = [];
+  if (!isFinite(x0) || !isFinite(y0) || (x1 - x0) * (y1 - y0) > 4e6) return pts;
+  const scale = Math.max(1, Math.abs(b.xmax - b.xmin), Math.abs(b.ymax - b.ymin));
+  for (let x = x0; x <= x1 && pts.length < cap; x++) {
+    for (let y = y0; y <= y1 && pts.length < cap; y++) {
+      const r = obj.f({ x, y });
+      if (isFinite(r) && Math.abs(r) < 1e-9 * scale) pts.push([x, y]);
+    }
+  }
+  return pts;
 }
 
 /** 매개변수 표본화 옵션: 화면 크기로 정밀도를, 매개변수 폭으로 표본 수를 정한다 */
@@ -1452,7 +1618,18 @@ export function analyzeObject(obj, bounds, ctx) {
           summary: parts.map(({ c }) => c.label).join('  ∪  '),
         };
       }
-      case 'function': return analyzeFunctionObject(obj, bounds, ctx);
+      case 'function': {
+        // 정의역이 이산이면 연속함수가 아니라 점열로 읽어야 한다
+        const dv = obj.substitute || 'x';
+        if (isDiscreteSet(obj.domains && obj.domains.get(dv))) {
+          const d = computeObject(obj, bounds);
+          const r = analyzePointSet(d.points);
+          return { title: '이산 점열 분석', ...r,
+            lead: `정의역이 ${domainText(obj.domains.get(dv))} 이므로 곡선이 아니라 `
+              + `점 ${d.points.length}개입니다.` };
+        }
+        return analyzeFunctionObject(obj, bounds, ctx);
+      }
       case 'functionY': {
         const r = analyzeFunction((y) => obj.fn({ y }), { xmin: bounds.ymin, xmax: bounds.ymax, name: 'x' });
         return { title: '함수 분석 (y 에 대한 함수)', ...r };
@@ -1586,6 +1763,12 @@ export function analyzeObject(obj, bounds, ctx) {
         return { title: '정적분 분석', findings, summary: `${pretty(d.value)}` };
       }
       case 'region': return analyzeRegion(obj, bounds);
+      case 'setting':
+        return { title: '계산 정밀도', findings: [{
+          type: 'precision', title: obj.label, confidence: 1,
+          detail: '내부 계산은 이 자릿수로 하고, 화면에는 표시 자릿수만큼만 적습니다. '
+            + '표시하려고 반올림한 값이 다음 계산에 흘러들지 않습니다.',
+        }], summary: obj.label };
       case 'parametric':
       case 'polar': {
         const d = computeObject(obj, bounds);
