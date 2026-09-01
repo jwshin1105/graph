@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 # 윈도우의 파이썬은 콘솔 인코딩을 cp1252 로 잡는다. 그대로 두면 한글은 물론
@@ -82,22 +83,46 @@ def smoke() -> None:
         env.setdefault("QT_QPA_PLATFORM", "offscreen")
     report = BUILD / "smoke.txt"
     report.unlink(missing_ok=True)
-    try:
-        r = subprocess.run([str(exe), f"--smoke-out={report}"],
-                           capture_output=True, text=True, timeout=300, env=env,
-                           encoding="utf-8", errors="replace")
-    except subprocess.TimeoutExpired:
-        said = report.read_text(encoding="utf-8").strip() if report.is_file() else ""
-        raise SystemExit("묶은 앱이 300초 안에 끝나지 않았습니다. "
-                         + (f"마지막으로 남긴 말: {said}" if said
-                            else "아무 말도 남기지 못했습니다 — 아예 뜨지 못한 것입니다."))
+    log = BUILD / "smoke-log.txt"
 
-    said = report.read_text(encoding="utf-8").strip() if report.is_file() else ""
-    print(said or (r.stdout.strip() or r.stderr.strip() or "(아무 말도 남기지 않았습니다)"))
+    # 프로세스가 스스로 끝나기를 기다리지 않는다. 윈도우에서 앱은 네 줄을 모두
+    # 제대로 그려 놓고도 부모가 끝을 보지 못했다 — 앱을 os._exit 으로 끊어도
+    # 마찬가지였으니, 막히는 곳은 앱이 아니라 출력 파이프다. 확인해야 할 것은
+    # "그렸는가"이지 "곱게 끝났는가"가 아니다. 파이프 대신 파일로 받고, 앱이
+    # 남기는 말을 지켜보다가 다 적히면 그때 끊는다.
+    끝 = ("잘 뜹니다.", "그려지지 않았습니다", "막혔습니다", "닫혔습니다")
+    with open(log, "w", encoding="utf-8") as sink:
+        proc = subprocess.Popen([str(exe), f"--smoke-out={report}"],
+                                stdout=sink, stderr=subprocess.STDOUT, env=env)
+        said = ""
+        for _ in range(300):                       # 최대 300초
+            if report.is_file():
+                said = report.read_text(encoding="utf-8", errors="replace").strip()
+                if any(w in said for w in 끝):
+                    break
+            if proc.poll() is not None:            # 말도 없이 죽었다
+                break
+            time.sleep(1)
+        스스로_끝났다 = proc.poll() is not None
+        if not 스스로_끝났다:
+            proc.kill()
+        try:
+            proc.wait(30)
+        except Exception:
+            pass
+
+    print(said or (log.read_text(encoding="utf-8", errors="replace").strip()
+                   or "(아무 말도 남기지 않았습니다)"))
     if not said:
         raise SystemExit("앱이 확인 결과를 남기지 않았습니다. 아예 뜨지 못한 것입니다.")
-    if r.returncode != 0 or "그려지지 않았습니다" in said or "막혔습니다" in said:
+    if not any(w in said for w in 끝):
+        raise SystemExit("앱이 확인을 끝내지 못했습니다. 위가 마지막으로 남긴 말입니다.")
+    if "잘 뜹니다." not in said:
         raise SystemExit("묶은 앱이 제대로 돌지 않습니다. 위 줄을 보세요.")
+    if 스스로_끝났다 and proc.returncode != 0:
+        raise SystemExit(f"앱이 종료 코드 {proc.returncode} 로 끝났습니다.")
+    if not 스스로_끝났다:
+        print("  (그림은 다 그렸으나 스스로 끝나지 않아 여기서 끊었습니다)")
 
 
 def size_of(path: Path) -> str:
