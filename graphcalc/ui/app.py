@@ -745,8 +745,12 @@ class Window(QMainWindow):
         self.panel.setHtml(to_html(rep))
 
     def closeEvent(self, e):
+        # 분석 갈래가 한창 셈을 하고 있으면 quit() 은 그 셈이 끝나야 먹는다.
+        # 창을 닫은 사람을 붙잡아 두지 않도록, 좀 기다려 보고 안 되면 끊는다.
         self.thread.quit()
-        self.thread.wait(2000)
+        if not self.thread.wait(3000):
+            self.thread.terminate()
+            self.thread.wait(1000)
         super().closeEvent(e)
 
 
@@ -804,25 +808,22 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 _write(out, state["report"])
                 print(state["report"])
-                # 분석 갈래가 셈을 하고 있으면 app.quit() 만으로는 프로세스가
-                # 끝나지 않는다. 창을 닫아 갈래를 먼저 재운다.
-                try:
-                    w.close()
-                except Exception:
-                    pass
-                app.quit()
+                for stream in (sys.stdout, sys.stderr):
+                    try:
+                        stream.flush()
+                    except Exception:
+                        pass
+                # 확인은 여기서 끝났다. app.quit() 을 부르고 이벤트 고리가
+                # 스스로 풀리기를 기다리면, 분석 갈래가 아직 셈을 하고 있는 한
+                # 프로세스가 끝나지 않는다 (윈도우에서 실제로 여기 걸렸다).
+                # 그래서 기다리지 않고 이 자리에서 끊는다.
+                os._exit(1 if state["bad"] else 0)
 
         QTimer.singleShot(6000, finish)
         app.exec()
-        code = 1 if state["bad"] else 0
-        # 그래도 남아 있는 갈래가 있으면 파이썬은 그것을 기다리다 멈춘다.
-        # 확인은 이미 끝났으니 여기서 끊는다 (윈도우에서 실제로 여기 걸렸다).
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.flush()
-            except Exception:
-                pass
-        os._exit(code)
+        # 여기까지 왔다면 finish 가 아예 불리지 않은 것이다.
+        _write(out, "확인이 시작되기 전에 창이 닫혔습니다.")
+        os._exit(1)
     return app.exec()
 
 
