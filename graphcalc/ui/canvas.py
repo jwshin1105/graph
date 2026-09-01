@@ -10,15 +10,13 @@ import math
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import (QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
+from PySide6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                            QPen, QPixmap)
 from PySide6.QtWidgets import QWidget
 
-BG = QColor("#ffffff")
-GRID = QColor("#e8ecf1")
-GRID2 = QColor("#f4f6f9")
-AXIS = QColor("#5a6672")
-TEXT = QColor("#3c4650")
+from .theme import math_font, theme
+
+RADIUS = 20        # 카드 모서리 — 그 안쪽으로만 그린다
 
 
 def nice_step(span, target=8):
@@ -121,11 +119,35 @@ class GraphCanvas(QWidget):
         self.update()
         self.view_changed.emit()
 
+    # ── 화면 밖으로 알려 주는 것
+    def range_text(self) -> str:
+        x0, x1 = self.view[0], self.view[1]
+        step = nice_step(x1 - x0)
+        return f"x ∈ [{fmt_tick(x0, step)}, {fmt_tick(x1, step)}]"
+
+    def span_text(self) -> str:
+        step = nice_step(self.view[1] - self.view[0])
+        return f"1칸 = {fmt_tick(step, step)}"
+
+    def zoom(self, k: float) -> None:
+        """가운데를 잡고 확대·축소한다 (단추로 눌렀을 때)."""
+        x0, x1, y0, y1 = self.view
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        self.view = [cx + (x0 - cx) * k, cx + (x1 - cx) * k,
+                     cy + (y0 - cy) * k, cy + (y1 - cy) * k]
+        self.update()
+        self.view_changed.emit()
+
     # ── 그리기
     def paintEvent(self, e):
+        t = theme()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        p.fillRect(self.rect(), BG)
+        # 카드 안에 앉아 있으므로 모서리 밖으로 넘치지 않게 오려 낸다
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), RADIUS, RADIUS)
+        p.setClipPath(clip)
+        p.fillPath(clip, t.q("card"))
         self._grid(p)
         for d in self.drawings:
             self._one(p, d)
@@ -133,18 +155,19 @@ class GraphCanvas(QWidget):
         p.end()
 
     def _grid(self, p):
+        t = theme()
         x0, x1, y0, y1 = self.view
         w, h = self.width(), self.height()
         step = nice_step(x1 - x0)
         small = step / 5
-        p.setPen(QPen(GRID2, 1))
+        p.setPen(QPen(t.q("grid_fine"), 1))
         for i in range(int(math.floor(x0 / small)), int(math.ceil(x1 / small)) + 1):
             gx = self.to_px(i * small, 0)[0]
             p.drawLine(QPointF(gx, 0), QPointF(gx, h))
         for j in range(int(math.floor(y0 / small)), int(math.ceil(y1 / small)) + 1):
             gy = self.to_px(0, j * small)[1]
             p.drawLine(QPointF(0, gy), QPointF(w, gy))
-        p.setPen(QPen(GRID, 1))
+        p.setPen(QPen(t.q("grid"), 1))
         for i in range(int(math.floor(x0 / step)), int(math.ceil(x1 / step)) + 1):
             gx = self.to_px(i * step, 0)[0]
             p.drawLine(QPointF(gx, 0), QPointF(gx, h))
@@ -153,16 +176,16 @@ class GraphCanvas(QWidget):
             p.drawLine(QPointF(0, gy), QPointF(w, gy))
 
         ax, ay = self.to_px(0, 0)
-        p.setPen(QPen(AXIS, 1.6))
+        p.setPen(QPen(t.q("axis"), 1.2))
         if 0 <= ay <= h:
             p.drawLine(QPointF(0, ay), QPointF(w, ay))
         if 0 <= ax <= w:
             p.drawLine(QPointF(ax, 0), QPointF(ax, h))
 
-        f = QFont()
-        f.setPointSizeF(8.5)
+        f = math_font(italic=False)
+        f.setPixelSize(12)
         p.setFont(f)
-        p.setPen(QPen(TEXT))
+        p.setPen(QPen(t.q("tick")))
         ly = min(max(ay + 12, 12), h - 4)
         for i in range(int(math.floor(x0 / step)), int(math.ceil(x1 / step)) + 1):
             if i == 0:
@@ -179,6 +202,7 @@ class GraphCanvas(QWidget):
                        Qt.AlignRight | Qt.AlignVCenter, fmt_tick(j * step, step))
 
     def _one(self, p, d):
+        t = theme()
         col = QColor(d.color)
         if d.region is not None:
             self._region(p, d, col)
@@ -202,7 +226,7 @@ class GraphCanvas(QWidget):
             p.drawPath(path)
         if d.points:
             p.setBrush(QBrush(col))
-            p.setPen(QPen(QColor("#ffffff"), 1.2))
+            p.setPen(QPen(t.q("card"), 1.2))
             r = 4.0 if len(d.points) < 400 else 2.5
             for x, y in d.points:
                 sx, sy = self.to_px(x, y)
@@ -225,15 +249,20 @@ class GraphCanvas(QWidget):
         p.drawPixmap(self.rect(), QPixmap.fromImage(img))
 
     def _readout(self, p):
+        """손이 가리키는 자리의 좌표. 눈금 간격이 허락하는 자릿수까지만 적는다."""
         if not self._cursor:
             return
+        t = theme()
         wx, wy = self.to_world(*self._cursor)
         step = nice_step(self.view[1] - self.view[0])
         d = max(2, -int(math.floor(math.log10(step))) + 2)
         s = f"({wx:.{d}f}, {wy:.{d}f})".replace("-", "−")
-        f = QFont()
-        f.setPointSizeF(9)
+        f = math_font(italic=False)
+        f.setPixelSize(12)
         p.setFont(f)
-        p.setPen(QPen(TEXT))
-        p.drawText(QRectF(self.width() - 190, self.height() - 22, 180, 18),
-                   Qt.AlignRight | Qt.AlignVCenter, s)
+        box = QRectF(self.width() - 214, self.height() - 46, 190, 30)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(t.q("card")))
+        p.drawRoundedRect(box, 15, 15)
+        p.setPen(QPen(t.q("ink2")))
+        p.drawText(box, Qt.AlignCenter, s)

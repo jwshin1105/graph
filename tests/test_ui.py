@@ -65,10 +65,35 @@ def test_눈금_간격():
 def test_보고서_html():
     o = objects(["P(n) = (n, n^2), n ∈ Z"])[0]
     html = to_html(analyze(o, view=VIEW))
-    assert "규칙 후보 (가설)" in html
+    assert "규칙 후보 · 가설" in html
+    assert "확인한 사실" in html
     assert "어떻게 구했나" in html
     assert "y = x²" in html
     assert "<script" not in html
+
+
+def test_수식만_세리프로_감싼다():
+    """한글은 건드리지 않고, 글자는 하나도 잃지 않는다."""
+    import html as _h
+    import re
+
+    from graphcalc.ui.panel import mathize
+    for text in ["모든 점이 x² + y² = 1 을 만족합니다",
+                 "정의역 — n ∈ ℤ (정수), n ≥ 1",
+                 "본 항이 모두 짝수입니다",
+                 "점 14개를 보았습니다 (n = 1‥14)"]:
+        out = mathize(text)
+        assert _h.unescape(re.sub(r"<[^>]+>", "", out)) == text
+    assert "<span class='m'>x² + y² = 1</span>" in mathize("모든 점이 x² + y² = 1 을 만족합니다")
+    assert "<span" not in mathize("본 항이 모두 짝수입니다")
+
+
+def test_테마를_바꿔도_같은_토큰을_쓴다():
+    from graphcalc.ui.theme import DARK, LIGHT, qss, report_css
+    for t in (LIGHT, DARK):
+        assert t.card in qss(t) and t.card in report_css(t)
+        assert len(t.plot) == 8
+    assert LIGHT.plot != DARK.plot          # 어두운 바탕에서는 다른 짝을 쓴다
 
 
 def test_보고서는_사실과_가설을_섞지_않는다():

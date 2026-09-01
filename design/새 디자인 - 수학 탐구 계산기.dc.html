@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html,body{height:100%;margin:0;overflow:hidden}
+a{color:oklch(0.52 0.10 258);text-decoration:none}
+a:hover{text-decoration:underline}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:oklch(0.90 0.005 260);border-radius:99px;border:3px solid #fff}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:oklch(0.985 0.002 260);font-family:'Noto Sans KR',system-ui,sans-serif;color:oklch(0.28 0.015 262);box-sizing:border-box;overflow:hidden">
+
+  <header style="height:64px;flex:0 0 64px;display:flex;align-items:center;gap:16px;padding:0 20px 0 24px;background:oklch(0.985 0.002 260)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:32px;height:32px;border-radius:10px;background:oklch(0.52 0.10 258);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-style:italic;font-size:18px;line-height:1">f</div>
+      <div style="font-size:17px;font-weight:500;letter-spacing:-.01em">수학 탐구 계산기</div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:4px">
+      <button title="밝기 전환" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.94 0.004 260)">◐</button>
+      <button title="이 화면 링크 복사" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.94 0.004 260)">↗</button>
+      <button title="PNG 저장" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.94 0.004 260)">⤓</button>
+    </div>
+  </header>
+
+  <div style="flex:1;min-height:0;display:flex;gap:12px;padding:0 20px 20px">
+
+    <section style="width:404px;flex:0 0 404px;display:flex;flex-direction:column;gap:12px;min-height:0">
+
+      <div style="flex:1;min-height:0;background:#fff;border-radius:20px;padding:8px;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(30,40,70,.06), 0 4px 16px rgba(30,40,70,.05);box-sizing:border-box">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px 8px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:.10em;color:oklch(0.58 0.012 262)">식</span>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:0 4px 4px">
+          <div style="border-radius:16px;padding:14px;display:flex;align-items:center;gap:12px;background:oklch(0.975 0.003 260);cursor:text">
+            <span style="width:10px;height:10px;flex:0 0 10px;border-radius:999px;background:oklch(0.88 0.006 260)"></span>
+            <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:20px;color:oklch(0.68 0.010 262);font-style:italic;white-space:nowrap">식을 적으세요</span>
+            <div style="flex:1"></div>
+            <span style="width:2px;height:22px;background:oklch(0.52 0.10 258);border-radius:2px"></span>
+          </div>
+        </div>
+
+        <div style="padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px;border-top:1px solid oklch(0.955 0.003 260)">
+          <div style="font-size:12px;color:oklch(0.60 0.012 262);line-height:1.7">
+            <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:14px;color:oklch(0.42 0.015 262)">y = f(x)</span> · <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:14px;color:oklch(0.42 0.015 262)">F(x, y) = 0</span> · <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:14px;color:oklch(0.42 0.015 262)">aₙ</span> · <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:14px;color:oklch(0.42 0.015 262)">Pₙ</span> — 무엇으로 읽었는지는 적고 나면 여기에 적힙니다.
+          </div>
+          <div style="font-size:11.5px;color:oklch(0.66 0.012 262)">Enter 로 다음 줄 · 정의역은 <span style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:13px">n ∈ Z</span> 처럼</div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border-radius:20px;padding:14px 16px 16px;box-shadow:0 1px 2px rgba(30,40,70,.06), 0 4px 16px rgba(30,40,70,.05);box-sizing:border-box">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:.10em;color:oklch(0.58 0.012 262)">정밀도</span>
+          <span style="font-size:11px;color:oklch(0.62 0.012 262)">계산하는 값과 보여 주는 값은 다릅니다</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:13px;flex:1">계산 자릿수</span>
+            <div style="display:flex;align-items:center;gap:2px;background:oklch(0.965 0.003 260);border-radius:999px;padding:3px">
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">−</button>
+              <span style="min-width:44px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;font-weight:500">50</span>
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">＋</button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:13px;flex:1">표시 자릿수</span>
+            <div style="display:flex;align-items:center;gap:2px;background:oklch(0.965 0.003 260);border-radius:999px;padding:3px">
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">−</button>
+              <span style="min-width:44px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;font-weight:500">12</span>
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">＋</button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:13px;flex:1">그래프 허용 오차 <em style="font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif">ε</em> <span style="color:oklch(0.62 0.012 262);font-size:11px">픽셀</span></span>
+            <div style="display:flex;align-items:center;gap:2px;background:oklch(0.965 0.003 260);border-radius:999px;padding:3px">
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">−</button>
+              <span style="min-width:44px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;font-weight:500">0.080</span>
+              <button style="width:26px;height:26px;border-radius:999px;border:none;background:transparent;color:oklch(0.45 0.015 262);font-size:14px;cursor:pointer" style-hover="background:#fff">＋</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <main style="flex:1;min-width:0;position:relative;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 1px 2px rgba(30,40,70,.06), 0 4px 16px rgba(30,40,70,.05)">
+      <canvas ref="{{ boardRef }}" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+
+      <div style="position:absolute;right:16px;top:16px;display:flex;flex-direction:column;background:#fff;border-radius:999px;padding:6px;gap:2px;box-shadow:0 1px 2px rgba(30,40,70,.10), 0 6px 20px rgba(30,40,70,.10)">
+        <button title="확대" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.38 0.015 262);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.95 0.004 260)">＋</button>
+        <button title="축소" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.38 0.015 262);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.95 0.004 260)">−</button>
+        <div style="height:1px;background:oklch(0.93 0.004 260);margin:4px 8px"></div>
+        <button title="해에 맞추기" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.80 0.008 262);font-size:15px;cursor:default;display:flex;align-items:center;justify-content:center">⤢</button>
+        <button title="x·y 축 비율 1:1 로" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.38 0.015 262);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.95 0.004 260)">□</button>
+        <button title="화면 처음으로" style="width:40px;height:40px;border-radius:999px;border:none;background:transparent;color:oklch(0.38 0.015 262);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:oklch(0.95 0.004 260)">⌂</button>
+      </div>
+
+      <div style="position:absolute;left:16px;bottom:16px;display:flex;align-items:center;gap:8px;background:#fff;border-radius:999px;padding:7px 14px;box-shadow:0 1px 2px rgba(30,40,70,.10), 0 4px 14px rgba(30,40,70,.08)">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:oklch(0.38 0.015 262)">x ∈ [−10, 10]</span>
+        <span style="width:1px;height:14px;background:oklch(0.92 0.004 260)"></span>
+        <span style="font-size:11.5px;color:oklch(0.58 0.012 262)">{{ spanText }}</span>
+      </div>
+    </main>
+
+    <section style="width:404px;flex:0 0 404px;min-height:0;background:#fff;border-radius:20px;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(30,40,70,.06), 0 4px 16px rgba(30,40,70,.05);box-sizing:border-box;overflow:hidden">
+      <div style="padding:16px 20px 12px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:.10em;color:oklch(0.58 0.012 262)">분석</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;background:oklch(0.972 0.003 260);border-radius:14px;padding:11px 14px">
+          <span style="flex:1;font-size:13px;color:oklch(0.66 0.012 262)">고른 식이 없습니다</span>
+          <span style="font-size:10px;color:oklch(0.75 0.010 262)">▼</span>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px 36px 60px;text-align:center">
+        <div style="width:56px;height:56px;border-radius:999px;background:oklch(0.965 0.003 260);display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4','Iowan Old Style',Georgia,'Times New Roman',serif;font-size:24px;font-style:italic;color:oklch(0.70 0.010 262)">?</div>
+        <div style="font-size:14px;font-weight:500;color:oklch(0.42 0.015 262)">식을 고르면 분석이 나옵니다</div>
+        <div style="font-size:12.5px;color:oklch(0.60 0.012 262);line-height:1.75">확인한 사실과 규칙 후보를 갈라 적고,<br />결론마다 어떻게 구했는지 함께 붙입니다.</div>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;minorGrid&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;그래프&quot;}}">
+class Component extends DCLogic {
+  span = '1칸 = 1';
+  attach = (node) => {
+    this.board = node;
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    if (!node) return;
+    this._ro = new ResizeObserver(() => this.draw());
+    this._ro.observe(node);
+    this.draw();
+  };
+
+  componentDidMount() { this.draw(); }
+  componentDidUpdate() { this.draw(); }
+  componentWillUnmount() { if (this._ro) this._ro.disconnect(); }
+
+  draw() {
+    const cv = this.board; if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect(); const W = r.width, H = r.height;
+    if (!W || !H) { requestAnimationFrame(() => this.draw()); return; }
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const p = cv.getContext('2d'); p.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const x0 = -10, x1 = 10, half = (x1 - x0) / 2 * H / W, y0 = -half, y1 = half;
+    const PX = (x) => (x - x0) / (x1 - x0) * W;
+    const PY = (y) => H - (y - y0) / (y1 - y0) * H;
+    const minor = this.props.minorGrid ?? true;
+
+    p.fillStyle = '#ffffff'; p.fillRect(0, 0, W, H);
+
+    const step = this.niceStep(x1 - x0), small = step / 5;
+    const L = (a, b, c, d) => { p.beginPath(); p.moveTo(a, b); p.lineTo(c, d); p.stroke(); };
+    p.lineWidth = 1;
+    if (minor) {
+      p.strokeStyle = 'oklch(0.975 0.002 260)';
+      for (let i = Math.floor(x0 / small); i <= Math.ceil(x1 / small); i++) L(PX(i * small), 0, PX(i * small), H);
+      for (let j = Math.floor(y0 / small); j <= Math.ceil(y1 / small); j++) L(0, PY(j * small), W, PY(j * small));
+    }
+    p.strokeStyle = 'oklch(0.945 0.003 260)';
+    for (let i = Math.floor(x0 / step); i <= Math.ceil(x1 / step); i++) L(PX(i * step), 0, PX(i * step), H);
+    for (let j = Math.floor(y0 / step); j <= Math.ceil(y1 / step); j++) L(0, PY(j * step), W, PY(j * step));
+
+    const ax = PX(0), ay = PY(0);
+    p.strokeStyle = 'oklch(0.80 0.008 262)'; p.lineWidth = 1.2;
+    L(0, ay, W, ay); L(ax, 0, ax, H);
+
+    p.fillStyle = 'oklch(0.62 0.012 262)';
+    p.font = '400 12px "Source Serif 4", "Iowan Old Style", Georgia, serif';
+    p.textAlign = 'center'; p.textBaseline = 'middle';
+    for (let i = Math.floor(x0 / step); i <= Math.ceil(x1 / step); i++) {
+      if (i === 0) continue;
+      p.fillText(this.fmt(i * step, step), Math.min(Math.max(PX(i * step), 22), W - 22), ay + 14);
+    }
+    p.textAlign = 'right';
+    for (let j = Math.floor(y0 / step); j <= Math.ceil(y1 / step); j++) {
+      if (j === 0) continue;
+      p.fillText(this.fmt(j * step, step), ax - 8, PY(j * step));
+    }
+
+    const next = `1칸 = ${this.fmt(step, step)}`;
+    if (next !== this.span) { this.span = next; this.forceUpdate(); }
+  }
+
+  niceStep(span, target = 8) {
+    const raw = span / Math.max(1, target), e = Math.floor(Math.log10(raw)), base = 10 ** e;
+    for (const m of [1, 2, 5, 10]) if (raw <= m * base) return m * base;
+    return 10 * base;
+  }
+  fmt(v, step) {
+    if (Math.abs(v) < step * 1e-6) return '0';
+    const d = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
+    const s = d ? v.toFixed(d).replace(/0+$/, '').replace(/\.$/, '') : v.toFixed(0);
+    return s.replace('-', '−');
+  }
+
+  renderVals() { return { boardRef: this.attach, spanText: this.span }; }
+}
+</script>
+</body>
+</html>

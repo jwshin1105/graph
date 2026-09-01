@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html,body{height:100%;margin:0;overflow:hidden}
+a{color:#2d70b3;text-decoration:none}a:hover{text-decoration:underline}
+</style>
+</helmet>
+<div style="display:flex;width:1440px;height:900px;background:#efefef;font-family:'DejaVu Sans','Noto Sans KR',-apple-system,sans-serif;font-size:13px;color:#26313c;box-sizing:border-box">
+
+  <div style="width:390px;flex:0 0 390px;display:flex;flex-direction:column;background:#fcfcfc;border-right:1px solid #c9c9c9;box-sizing:border-box">
+    <div style="padding:8px 4px 8px 12px;font-weight:600;color:#33404c;border-bottom:1px solid #e3e8ee">식</div>
+
+    <div style="flex:1;overflow-y:auto;padding:4px 0;display:flex;flex-direction:column;gap:2px;align-items:stretch">
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 6px">
+        <div style="width:10px;height:22px;flex:0 0 10px;background:#c74440;border-radius:3px"></div>
+        <input type="checkbox" checked="checked" title="그래프에 그릴지 말지" style="width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:#3874d8" />
+        <input value="y = x^2 - 3" style="flex:1;min-width:0;font-family:'DejaVu Sans',sans-serif;font-size:14.7px;padding:3px 5px;border:1px solid #a9a9a9;border-radius:2px;background:#fff;color:#26313c;outline:none" />
+        <span style="color:#7a8794;font-size:11px;min-width:96px;flex:0 0 96px">함수 y = f(x)</span>
+        <button style="width:22px;height:22px;flex:0 0 22px;border:none;background:transparent;color:#5a6672;font-size:14px;cursor:pointer;border-radius:2px" style-hover="background:#e2e6ea">×</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 6px">
+        <div style="width:10px;height:22px;flex:0 0 10px;background:#2d70b3;border-radius:3px"></div>
+        <input type="checkbox" checked="checked" title="그래프에 그릴지 말지" style="width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:#3874d8" />
+        <input value="x^2 + y^2 = 4" style="flex:1;min-width:0;font-family:'DejaVu Sans',sans-serif;font-size:14.7px;padding:3px 5px;border:1px solid #a9a9a9;border-radius:2px;background:#fff;color:#26313c;outline:none" />
+        <span style="color:#7a8794;font-size:11px;min-width:96px;flex:0 0 96px">음함수 F(x, y) = 0</span>
+        <button style="width:22px;height:22px;flex:0 0 22px;border:none;background:transparent;color:#5a6672;font-size:14px;cursor:pointer;border-radius:2px" style-hover="background:#e2e6ea">×</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 6px">
+        <div style="width:10px;height:22px;flex:0 0 10px;background:#388c46;border-radius:3px"></div>
+        <input type="checkbox" checked="checked" title="그래프에 그릴지 말지" style="width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:#3874d8" />
+        <input value="P(n) = (cos n, sin n), n ∈ Z" style="flex:1;min-width:0;font-family:'DejaVu Sans',sans-serif;font-size:14.7px;padding:3px 5px;border:1px solid #3874d8;border-radius:2px;background:#fff;color:#26313c;outline:none" />
+        <span style="color:#7a8794;font-size:11px;min-width:96px;flex:0 0 96px">점열 Pₙ</span>
+        <button style="width:22px;height:22px;flex:0 0 22px;border:none;background:transparent;color:#5a6672;font-size:14px;cursor:pointer;border-radius:2px" style-hover="background:#e2e6ea">×</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 6px">
+        <div style="width:10px;height:22px;flex:0 0 10px;background:#6042a6;border-radius:3px"></div>
+        <input type="checkbox" checked="checked" title="그래프에 그릴지 말지" style="width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:#3874d8" />
+        <input value="a_n = 2n - 1" style="flex:1;min-width:0;font-family:'DejaVu Sans',sans-serif;font-size:14.7px;padding:3px 5px;border:1px solid #a9a9a9;border-radius:2px;background:#fff;color:#26313c;outline:none" />
+        <span style="color:#7a8794;font-size:11px;min-width:96px;flex:0 0 96px">수열 aₙ</span>
+        <button style="width:22px;height:22px;flex:0 0 22px;border:none;background:transparent;color:#5a6672;font-size:14px;cursor:pointer;border-radius:2px" style-hover="background:#e2e6ea">×</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 6px">
+        <div style="width:10px;height:22px;flex:0 0 10px"></div>
+        <input type="checkbox" checked="checked" style="width:14px;height:14px;flex:0 0 14px;margin:0;accent-color:#3874d8" />
+        <input value="" placeholder="식을 적으세요 —  y = x^2,  P(n) = (n, n^2), n ∈ Z" style="flex:1;min-width:0;font-family:'DejaVu Sans',sans-serif;font-size:14.7px;padding:3px 5px;border:1px solid #a9a9a9;border-radius:2px;background:#fff;color:#26313c;outline:none" />
+        <span style="color:#7a8794;font-size:11px;min-width:96px;flex:0 0 96px"></span>
+        <button style="width:22px;height:22px;flex:0 0 22px;border:none;background:transparent;color:#5a6672;font-size:14px;cursor:pointer;border-radius:2px" style-hover="background:#e2e6ea">×</button>
+      </div>
+    </div>
+
+    <button style="border:1px solid #adadad;background:#efefef;color:#26313c;padding:5px 10px;font-size:13px;font-family:inherit;border-radius:2px;cursor:pointer;margin:0" style-hover="background:#e6e6e6">+  식 더하기</button>
+
+    <div style="border:1px solid #b4b4b4;border-radius:2px;margin:0;padding:6px 8px;display:flex;flex-direction:column;gap:4px;background:#fcfcfc">
+      <div style="font-weight:600;color:#33404c">정밀도</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span>계산 자릿수</span>
+        <div style="flex:1"></div>
+        <div style="display:flex;border:1px solid #a9a9a9;border-radius:2px;background:#fff;overflow:hidden">
+          <input value="50" style="width:56px;border:none;outline:none;padding:2px 5px;font-family:inherit;font-size:13px;color:#26313c;background:transparent" />
+          <div style="display:flex;flex-direction:column;border-left:1px solid #cfcfcf">
+            <button style="width:16px;height:10px;border:none;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▲</button>
+            <button style="width:16px;height:10px;border:none;border-top:1px solid #cfcfcf;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▼</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span>표시 자릿수</span>
+        <div style="flex:1"></div>
+        <div style="display:flex;border:1px solid #a9a9a9;border-radius:2px;background:#fff;overflow:hidden">
+          <input value="12" style="width:56px;border:none;outline:none;padding:2px 5px;font-family:inherit;font-size:13px;color:#26313c;background:transparent" />
+          <div style="display:flex;flex-direction:column;border-left:1px solid #cfcfcf">
+            <button style="width:16px;height:10px;border:none;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▲</button>
+            <button style="width:16px;height:10px;border:none;border-top:1px solid #cfcfcf;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▼</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span>그래프 허용 오차 ε (픽셀)</span>
+        <div style="flex:1"></div>
+        <div style="display:flex;border:1px solid #a9a9a9;border-radius:2px;background:#fff;overflow:hidden">
+          <input value="0.080" style="width:56px;border:none;outline:none;padding:2px 5px;font-family:inherit;font-size:13px;color:#26313c;background:transparent" />
+          <div style="display:flex;flex-direction:column;border-left:1px solid #cfcfcf">
+            <button style="width:16px;height:10px;border:none;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▲</button>
+            <button style="width:16px;height:10px;border:none;border-top:1px solid #cfcfcf;background:#efefef;font-size:6px;line-height:1;cursor:pointer;color:#444;padding:0">▼</button>
+          </div>
+        </div>
+      </div>
+      <button style="border:1px solid #adadad;background:#efefef;color:#26313c;padding:5px 10px;font-size:13px;font-family:inherit;border-radius:2px;cursor:pointer" style-hover="background:#e6e6e6">화면 처음으로</button>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;position:relative;background:#fff;border-right:1px solid #c9c9c9">
+    <canvas ref="{{ boardRef }}" style="width:100%;height:100%;display:block"></canvas>
+  </div>
+
+  <div style="width:380px;flex:0 0 380px;display:flex;flex-direction:column;background:#fcfcfc;box-sizing:border-box">
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #e3e8ee">
+      <span>분석</span>
+      <div style="flex:1;display:flex;align-items:center;justify-content:space-between;border:1px solid #a9a9a9;border-radius:2px;background:#efefef;padding:3px 6px;cursor:pointer;font-size:13px">
+        <span>P(n) = (cos n, sin n), n ∈ Z</span>
+        <span style="color:#5a6672;font-size:9px">▼</span>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;background:#fff;padding:8px 10px;font-family:-apple-system,'Noto Sans KR',sans-serif;font-size:13px;color:#26313c;line-height:1.55">
+      <div style="color:#5a6672;font-size:12px;margin-bottom:8px">점열 Pₙ · 번호 n 마다 점 하나 (선으로 잇지 않습니다) · n ∈ ℤ</div>
+
+      <h2 style="font-size:14px;margin:14px 0 6px;color:#10171e">확인한 사실</h2>
+      <div style="margin:5px 0 9px">
+        <span style="font-size:11px;padding:1px 6px;border-radius:8px;margin-right:6px;background:#e6f2ea;color:#1d6b3d">사실</span>점 <b>14개</b>를 보았습니다 (n = 1‥14)
+        <div style="color:#4a5560;font-size:12px;margin-left:2px">(0.5403, 0.8415) (−0.4161, 0.9093) (−0.99, 0.1411) …</div>
+      </div>
+      <div style="margin:5px 0 9px">
+        <span style="font-size:11px;padding:1px 6px;border-radius:8px;margin-right:6px;background:#e6f2ea;color:#1d6b3d">사실</span>걸음의 길이가 모두 <b>√(2 − 2cos(1))</b> 로 같습니다
+        <div style="color:#6b7683;font-size:11.5px;margin:2px 0 0 12px;border-left:2px solid #dde3ea;padding-left:8px">어떻게 구했나 — 이웃한 두 점의 거리를 정확값으로 구해 서로 같은지 SymPy 로 확인했습니다.</div>
+      </div>
+      <div style="margin:5px 0 9px">
+        <span style="font-size:11px;padding:1px 6px;border-radius:8px;margin-right:6px;background:#e6f2ea;color:#1d6b3d">사실</span>모든 점이 원점에서 같은 거리 <b>1</b> 에 있습니다 — 원 위의 점입니다
+      </div>
+
+      <h2 style="font-size:14px;margin:14px 0 6px;color:#10171e">규칙 후보 (가설)</h2>
+      <p style="color:#6b7683;font-size:12px;margin:6px 0">유한한 항으로는 규칙이 하나로 정해지지 않습니다. 아래는 <b>본 값과 들어맞는</b> 후보이며, 확인에 쓴 여분의 항 수를 함께 적었습니다.</p>
+      <div style="margin:5px 0 9px">
+        <span style="font-size:11px;padding:1px 6px;border-radius:8px;margin-right:6px;background:#fdf0e2;color:#96541a">가설 5/5</span>모든 점이 <b>x² + y² = 1</b> 을 만족합니다
+        <div style="color:#4a5560;font-size:12px;margin-left:2px">그 관계는 원의 식입니다 (총차수 2, 점 9개 사용)</div>
+        <div style="color:#6b7683;font-size:11.5px;margin:2px 0 0 12px;border-left:2px solid #dde3ea;padding-left:8px">어떻게 구했나 — 총차수 2 이하 단항식 행렬의 가장 작은 특이값에 딸린 벡터를 구하고, 계수를 유리수로 되돌린 뒤 정확한 좌표에서 정말 0 인지 확인했습니다.</div>
+      </div>
+      <div style="margin:5px 0 9px">
+        <span style="font-size:11px;padding:1px 6px;border-radius:8px;margin-right:6px;background:#fdf0e2;color:#96541a">가설 5/5</span>회전 — <b>Pₙ₊₁ = [[cos(1), −sin(1)], [sin(1), cos(1)]]·Pₙ</b>
+        <div style="color:#4a5560;font-size:12px;margin-left:2px">1 라디안만큼 돌립니다</div>
+      </div>
+
+      <h2 style="font-size:14px;margin:14px 0 6px;color:#10171e">좌표</h2>
+      <table style="border-collapse:collapse;margin:6px 0 10px;font-size:12px">
+        <tbody>
+          <tr>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:left;background:#f8fafc;font-weight:600">n</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">1</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">2</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">3</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">4</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">5</th>
+            <th style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right;background:#f4f7fa;font-weight:600">…</th>
+          </tr>
+          <tr>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:left;background:#f8fafc">xₙ</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">0.5403</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">−0.4161</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">−0.99</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">−0.6536</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">0.2837</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">…</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:left;background:#f8fafc">yₙ</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">0.8415</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">0.9093</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">0.1411</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">−0.7568</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">−0.9589</td>
+            <td style="border:1px solid #dfe5ec;padding:2px 7px;text-align:right">…</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="color:#6b7683;font-size:12px;margin:6px 0">· 표와 그림에는 앞의 열네 항만 썼습니다. 관계를 찾을 때에는 예순 항까지 꺼내 썼습니다.</p>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  attach = (node) => {
+    this.board = node;
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    if (!node) return;
+    this._ro = new ResizeObserver(() => this.draw());
+    this._ro.observe(node);
+    this.draw();
+  };
+  componentDidMount() { this.draw(); }
+  componentDidUpdate() { this.draw(); }
+  componentWillUnmount() { if (this._ro) this._ro.disconnect(); }
+
+  draw() {
+    const cv = this.board; if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect(); const W = r.width, H = r.height;
+    if (!W || !H) { requestAnimationFrame(() => this.draw()); return; }
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const p = cv.getContext('2d'); p.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // canvas.py: view = [-10, 10, -6.5, 6.5], keep_aspect()
+    const x0 = -10, x1 = 10, half = (x1 - x0) / 2 * H / W, y0 = -half, y1 = half;
+    const PX = (x) => (x - x0) / (x1 - x0) * W;
+    const PY = (y) => H - (y - y0) / (y1 - y0) * H;
+
+    p.fillStyle = '#ffffff'; p.fillRect(0, 0, W, H);
+
+    const step = this.niceStep(x1 - x0), small = step / 5;
+    const L = (a, b, c, d) => { p.beginPath(); p.moveTo(a, b); p.lineTo(c, d); p.stroke(); };
+    p.lineWidth = 1; p.strokeStyle = '#f4f6f9';
+    for (let i = Math.floor(x0 / small); i <= Math.ceil(x1 / small); i++) L(PX(i * small), 0, PX(i * small), H);
+    for (let j = Math.floor(y0 / small); j <= Math.ceil(y1 / small); j++) L(0, PY(j * small), W, PY(j * small));
+    p.strokeStyle = '#e8ecf1';
+    for (let i = Math.floor(x0 / step); i <= Math.ceil(x1 / step); i++) L(PX(i * step), 0, PX(i * step), H);
+    for (let j = Math.floor(y0 / step); j <= Math.ceil(y1 / step); j++) L(0, PY(j * step), W, PY(j * step));
+
+    const ax = PX(0), ay = PY(0);
+    p.strokeStyle = '#5a6672'; p.lineWidth = 1.6;
+    L(0, ay, W, ay); L(ax, 0, ax, H);
+
+    p.fillStyle = '#3c4650'; p.font = '11.3px "DejaVu Sans", sans-serif';
+    p.textAlign = 'center'; p.textBaseline = 'middle';
+    const ly = Math.min(Math.max(ay + 12, 12), H - 4);
+    for (let i = Math.floor(x0 / step); i <= Math.ceil(x1 / step); i++) {
+      if (i === 0) continue;
+      p.fillText(this.fmt(i * step, step), Math.min(Math.max(PX(i * step), 22), W - 22), ly);
+    }
+    p.textAlign = 'right';
+    const lx = Math.min(Math.max(ax - 6, 4), W - 4);
+    for (let j = Math.floor(y0 / step); j <= Math.ceil(y1 / step); j++) {
+      if (j === 0) continue;
+      p.fillText(this.fmt(j * step, step), lx, PY(j * step));
+    }
+
+    p.lineJoin = 'round'; p.lineCap = 'round'; p.lineWidth = 2;
+    // y = x^2 - 3
+    p.strokeStyle = '#c74440'; p.beginPath();
+    for (let px = 0; px <= W; px++) {
+      const x = x0 + px / W * (x1 - x0), y = x * x - 3;
+      px === 0 ? p.moveTo(px, PY(y)) : p.lineTo(px, PY(y));
+    }
+    p.stroke();
+    // x^2 + y^2 = 4
+    p.strokeStyle = '#2d70b3'; p.beginPath();
+    for (let t = 0; t <= 361; t++) {
+      const a = t * Math.PI / 180, X = 2 * Math.cos(a), Y = 2 * Math.sin(a);
+      t === 0 ? p.moveTo(PX(X), PY(Y)) : p.lineTo(PX(X), PY(Y));
+    }
+    p.stroke();
+    // 점열 (cos n, sin n), n ∈ Z  /  수열 a_n = 2n - 1
+    const dot = (x, y, c) => {
+      p.beginPath(); p.arc(PX(x), PY(y), 4, 0, Math.PI * 2);
+      p.fillStyle = c; p.fill();
+      p.lineWidth = 1.2; p.strokeStyle = '#ffffff'; p.stroke();
+    };
+    for (let n = 1; n <= 60; n++) dot(Math.cos(n), Math.sin(n), '#388c46');
+    for (let n = 1; n * 1 <= x1 + 1; n++) dot(n, 2 * n - 1, '#6042a6');
+
+    // 커서 좌표 읽기
+    p.fillStyle = '#3c4650'; p.font = '12px "DejaVu Sans", sans-serif';
+    p.textAlign = 'right'; p.textBaseline = 'middle';
+    p.fillText('(3.42, −1.08)'.replace('-', '−'), W - 10, H - 13);
+  }
+
+  niceStep(span, target = 8) {
+    const raw = span / Math.max(1, target), e = Math.floor(Math.log10(raw)), base = 10 ** e;
+    for (const m of [1, 2, 5, 10]) if (raw <= m * base) return m * base;
+    return 10 * base;
+  }
+  fmt(v, step) {
+    if (Math.abs(v) < step * 1e-6) return '0';
+    const d = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
+    let s = d ? v.toFixed(d).replace(/0+$/, '').replace(/\.$/, '') : v.toFixed(0);
+    return s.replace('-', '−');
+  }
+
+  renderVals() { return { boardRef: this.attach }; }
+}
+</script>
+</body>
+</html>

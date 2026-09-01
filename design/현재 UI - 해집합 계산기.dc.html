@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html,body{height:100%;margin:0;overflow:hidden;-webkit-font-smoothing:antialiased}
+a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}
+input[type=range]{accent-color:#2563eb}
+</style>
+</helmet>
+<div style="display:flex;height:100vh;font-family:ui-sans-serif, system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;color:#16202e;background:#ffffff;box-sizing:border-box">
+
+  <aside style="width:380px;min-width:300px;background:#f7f9fc;border-right:1px solid #dfe5ee;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box">
+    <header style="padding:16px 16px 10px;border-bottom:1px solid #dfe5ee">
+      <div style="font-size:16px;font-weight:700;letter-spacing:-.2px">해집합 계산기</div>
+      <div style="font-size:11.5px;color:#63718a;margin-top:3px;line-height:1.45">적응형 등고선 + 고립해(점열) 복원 + 규칙성 자동 분석</div>
+    </header>
+
+    <div style="padding:10px 10px 0;overflow-y:auto;max-height:46vh;display:flex;flex-direction:column;gap:8px">
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-radius:10px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);overflow:hidden">
+        <div style="display:flex;align-items:stretch">
+          <div style="width:8px;flex:0 0 8px;background:#2563eb;cursor:pointer"></div>
+          <input value="sin(x)^2 + sin(y)^2 = 0" spellcheck="false" style="flex:1;min-width:0;border:none;background:transparent;color:#16202e;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:13.5px;padding:11px 8px;outline:none" />
+          <div style="display:flex;align-items:center;padding-right:6px;gap:2px">
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">●</button>
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">분석</button>
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">✕</button>
+          </div>
+        </div>
+        <div style="padding:0 12px 9px 16px;font-size:11.5px;color:#63718a;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:10.5px;padding:1.5px 7px;border-radius:99px;background:#dfe5ee;color:#63718a;font-weight:600">음함수</span>
+          <span style="font-size:10.5px;padding:1.5px 7px;border-radius:99px;background:color-mix(in srgb, #2563eb 18%, transparent);color:#2563eb;font-weight:600">점 63개</span>
+        </div>
+        <div style="padding:2px 12px 9px 16px;overflow-x:auto">
+          <span style="font-family:'Cambria Math','Latin Modern Math','Times New Roman',serif;font-size:14.5px;line-height:1.15;display:inline-flex;align-items:center;white-space:nowrap"><span style="font-style:normal">sin</span><span style="padding-left:1px"><i>x</i></span><span style="font-size:68%;position:relative;top:-.45em;line-height:0">2</span><span style="font-style:normal;padding:0 3px">+</span><span style="font-style:normal">sin</span><span style="padding-left:1px"><i>y</i></span><span style="font-size:68%;position:relative;top:-.45em;line-height:0">2</span><span style="font-style:normal;padding:0 5px">=</span><span style="font-style:normal">0</span></span>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-radius:10px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);overflow:hidden">
+        <div style="display:flex;align-items:stretch">
+          <div style="width:8px;flex:0 0 8px;background:#dc2626;cursor:pointer"></div>
+          <input value="y = x^3 - 3x" spellcheck="false" style="flex:1;min-width:0;border:none;background:transparent;color:#16202e;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:13.5px;padding:11px 8px;outline:none" />
+          <div style="display:flex;align-items:center;padding-right:6px;gap:2px">
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">●</button>
+            <button style="border:none;background:transparent;color:#2563eb;font-weight:700;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit">분석</button>
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">✕</button>
+          </div>
+        </div>
+        <div style="padding:0 12px 9px 16px;font-size:11.5px;color:#63718a;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:10.5px;padding:1.5px 7px;border-radius:99px;background:#dfe5ee;color:#63718a;font-weight:600">함수</span>
+          <span style="font-size:10.5px;padding:1.5px 7px;border-radius:99px;background:#dfe5ee;color:#63718a;font-weight:600">곡선 1가지</span>
+        </div>
+        <div style="padding:2px 12px 9px 16px;overflow-x:auto">
+          <span style="font-family:'Cambria Math','Latin Modern Math','Times New Roman',serif;font-size:14.5px;line-height:1.15;display:inline-flex;align-items:center;white-space:nowrap"><i>y</i><span style="font-style:normal;padding:0 5px">=</span><i>x</i><span style="font-size:68%;position:relative;top:-.45em;line-height:0">3</span><span style="font-style:normal;padding:0 3px">−</span><span style="font-style:normal">3</span><i>x</i></span>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-radius:10px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);overflow:hidden">
+        <div style="display:flex;align-items:stretch">
+          <div style="width:8px;flex:0 0 8px;background:#059669;cursor:pointer"></div>
+          <input value="" placeholder="예: x^2 + y^2 = 4" spellcheck="false" style="flex:1;min-width:0;border:none;background:transparent;color:#16202e;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:13.5px;padding:11px 8px;outline:none" />
+          <div style="display:flex;align-items:center;padding-right:6px;gap:2px">
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">●</button>
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">분석</button>
+            <button style="border:none;background:transparent;color:#63718a;cursor:pointer;font-size:12px;padding:5px 7px;border-radius:6px;font-family:inherit" style-hover="background:#dfe5ee;color:#16202e">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;padding:4px 12px 10px">
+      <button style="flex:1;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:8px;padding:8px 10px;font-size:12.5px;cursor:pointer;font-family:inherit" style-hover="filter:brightness(1.08)">＋ 식 추가</button>
+      <button style="flex:1;border:1px solid #dfe5ee;background:#fff;color:#16202e;border-radius:8px;padding:8px 10px;font-size:12.5px;cursor:pointer;font-family:inherit" style-hover="border-color:#2563eb;color:#2563eb">예제</button>
+      <button style="flex:1;border:1px solid #dfe5ee;background:#fff;color:#16202e;border-radius:8px;padding:8px 10px;font-size:12.5px;cursor:pointer;font-family:inherit" style-hover="border-color:#2563eb;color:#2563eb">전체 지움</button>
+    </div>
+
+    <section style="flex:1;overflow-y:auto;padding:12px;border-top:1px solid #dfe5ee">
+      <div style="font-size:13px;font-weight:700;margin-bottom:3px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <span>함수 분석 — y = x³ − 3x</span>
+        <button style="flex:0 0 auto;font-size:10.5px;padding:2px 8px;border:1px solid #dfe5ee;border-radius:6px;font-weight:500;background:transparent;color:#63718a;cursor:pointer;font-family:inherit">복사</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin:6px 0 10px;font-size:11.5px">
+        <tbody>
+          <tr><th style="text-align:left;color:#63718a;font-weight:600;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;width:1%">객체 유형</th><td style="padding:3px 0;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;word-break:break-word">함수 y = f(x) · 3차 다항함수</td></tr>
+          <tr><th style="text-align:left;color:#63718a;font-weight:600;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;width:1%;border-top:1px solid #dfe5ee">정의역</th><td style="padding:3px 0;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;border-top:1px solid #dfe5ee">x ∈ ℝ</td></tr>
+          <tr><th style="text-align:left;color:#63718a;font-weight:600;padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top;width:1%;border-top:1px solid #dfe5ee">대칭</th><td style="padding:3px 0;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;border-top:1px solid #dfe5ee">기함수 — 원점 대칭</td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:12px;color:#63718a;margin-bottom:10px;line-height:1.6;font-family:ui-monospace, SFMono-Regular, Menlo, monospace">영점 3개 · 극값 2개 · 변곡점 1개를 정확히 풀어 구했습니다.</div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-left:3px solid #2563eb;border-radius:8px;padding:9px 11px;margin-bottom:7px">
+        <div style="font-size:12.5px;font-weight:700;display:flex;justify-content:space-between;gap:8px">
+          <span><span style="display:inline-block;font-size:9.5px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;margin-right:5px;vertical-align:1px;letter-spacing:.02em;background:color-mix(in srgb, #63718a 18%, transparent);color:#63718a">사실</span>영점 — x = 0, ±√3</span>
+          <span style="font-size:10px;color:#63718a;font-weight:500;white-space:nowrap">확신도 100%</span>
+        </div>
+        <div style="font-size:11.5px;color:#63718a;margin-top:4px;line-height:1.6">x(x² − 3) = 0 을 정확히 풀었습니다.</div>
+        <div style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:12.5px;margin-top:6px;background:color-mix(in srgb, #2563eb 9%, transparent);color:#16202e;padding:6px 9px;border-radius:6px;overflow-x:auto;white-space:nowrap">{−√3, 0, √3}</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-left:3px solid #2563eb;border-radius:8px;padding:9px 11px;margin-bottom:7px">
+        <div style="font-size:12.5px;font-weight:700;display:flex;justify-content:space-between;gap:8px">
+          <span><span style="display:inline-block;font-size:9.5px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;margin-right:5px;vertical-align:1px;letter-spacing:.02em;background:color-mix(in srgb, #63718a 18%, transparent);color:#63718a">사실</span>극값 — 극대 (−1, 2) · 극소 (1, −2)</span>
+          <span style="font-size:10px;color:#63718a;font-weight:500;white-space:nowrap">확신도 100%</span>
+        </div>
+        <div style="font-size:11.5px;color:#63718a;margin-top:4px;line-height:1.6">f′(x) = 3x² − 3 = 0 의 해에서 2계 도함수의 부호로 갈랐습니다.</div>
+        <details style="margin-top:6px;font-size:11px">
+          <summary style="cursor:pointer;color:#63718a;user-select:none">어떻게 구했나</summary>
+          <div style="margin-top:4px;color:#63718a;line-height:1.5">도함수를 기호로 구해 f′(x) = 0 을 정확히 풀고, f″(±1) = ±6 의 부호로 극대·극소를 정했습니다.</div>
+        </details>
+      </div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-left:3px solid #2563eb;border-radius:8px;padding:9px 11px;margin-bottom:7px">
+        <div style="font-size:12.5px;font-weight:700;display:flex;justify-content:space-between;gap:8px">
+          <span><span style="display:inline-block;font-size:9.5px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;margin-right:5px;vertical-align:1px;letter-spacing:.02em;background:color-mix(in srgb, #d97706 22%, transparent);color:#b45309">가설</span><span style="display:inline-block;font-size:9.5px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;margin-right:5px;vertical-align:1px;letter-spacing:.02em;background:color-mix(in srgb, #059669 20%, transparent);color:#047857">검증 5/5</span>변곡점 — (0, 0)</span>
+          <span style="font-size:10px;color:#63718a;font-weight:500;white-space:nowrap">확신도 96%</span>
+        </div>
+        <div style="font-size:11.5px;color:#63718a;margin-top:4px;line-height:1.6">f″(x) = 6x 의 부호가 x = 0 에서 바뀝니다.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #dfe5ee;border-left:3px solid #63718a;border-radius:8px;padding:9px 11px;margin-bottom:7px;opacity:.88">
+        <div style="font-size:12.5px;font-weight:700;display:flex;justify-content:space-between;gap:8px">
+          <span>부정적분</span>
+          <span style="font-size:10px;color:#63718a;font-weight:500;white-space:nowrap">확신도 82%</span>
+        </div>
+        <div style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:12.5px;margin-top:6px;background:color-mix(in srgb, #2563eb 9%, transparent);color:#16202e;padding:6px 9px;border-radius:6px;overflow-x:auto;white-space:nowrap">x⁴/4 − 3x²/2 + C</div>
+      </div>
+    </section>
+
+    <footer style="padding:8px 14px;border-top:1px solid #dfe5ee;font-size:10.5px;color:#63718a">
+      <span>드래그: 이동 · 휠: 확대(shift=세로만, alt=가로만) · Ctrl+Z: 되돌리기 · 자동 저장됨</span>
+    </footer>
+  </aside>
+
+  <main style="flex:1;position:relative;min-width:0">
+    <canvas ref="{{ boardRef }}" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+    <div style="position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:5px">
+      <button title="확대" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">＋</button>
+      <button title="축소" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">－</button>
+      <button title="기본 보기" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">⌂</button>
+      <button title="해에 맞추기" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">⤢</button>
+      <button title="x·y 축 비율 1:1 로" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">□</button>
+      <button title="각도 단위: 라디안 (눌러서 도)" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">π</button>
+      <button title="곡선끼리의 교점 표시" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">∩</button>
+      <button title="밝기 전환" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">◐</button>
+      <button title="이 화면 링크 복사" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">🔗</button>
+      <button title="PNG 저장" style="width:34px;height:34px;border-radius:8px;border:1px solid #dfe5ee;background:#fff;color:#16202e;cursor:pointer;font-size:15px;box-shadow:0 1px 2px rgba(15,30,60,.06), 0 4px 16px rgba(15,30,60,.06);display:flex;align-items:center;justify-content:center" style-hover="border-color:#2563eb;color:#2563eb">⬇</button>
+    </div>
+    <div style="position:absolute;left:14px;bottom:12px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:11px;color:#63718a;background:color-mix(in srgb, #ffffff 82%, transparent);padding:4px 9px;border-radius:6px;pointer-events:none">{{ statusText }}</div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  status = '';
+  attach = (node) => {
+    this.board = node;
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    if (!node) return;
+    this._ro = new ResizeObserver(() => this.draw());
+    this._ro.observe(node);
+    this.draw();
+  };
+
+  componentDidMount() { this.draw(); }
+  componentDidUpdate() { this.draw(); }
+  componentWillUnmount() { if (this._ro) this._ro.disconnect(); }
+
+  draw() {
+    const cv = this.board;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect();
+    const W = r.width, H = r.height;
+    if (!W || !H) { requestAnimationFrame(() => this.draw()); return; }
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const scale = Math.min(W / 13, H / 9);
+    const X = (x) => W / 2 + x * scale;
+    const Y = (y) => H / 2 - y * scale;
+    const xmin = -W / 2 / scale, xmax = W / 2 / scale;
+    const ymin = -H / 2 / scale, ymax = H / 2 / scale;
+
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+
+    const step = 1, sub = step / 5;
+    const line = (a, b, c, d) => { ctx.moveTo(a, b); ctx.lineTo(c, d); };
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#f1f4f8'; ctx.beginPath();
+    for (let v = Math.ceil(xmin / sub) * sub; v <= xmax; v += sub) { const p = Math.round(X(v)) + 0.5; line(p, 0, p, H); }
+    for (let v = Math.ceil(ymin / sub) * sub; v <= ymax; v += sub) { const p = Math.round(Y(v)) + 0.5; line(0, p, W, p); }
+    ctx.stroke();
+    ctx.strokeStyle = '#e3e8ef'; ctx.beginPath();
+    for (let v = Math.ceil(xmin); v <= xmax; v += step) { const p = Math.round(X(v)) + 0.5; line(p, 0, p, H); }
+    for (let v = Math.ceil(ymin); v <= ymax; v += step) { const p = Math.round(Y(v)) + 0.5; line(0, p, W, p); }
+    ctx.stroke();
+
+    const ax = Math.round(X(0)) + 0.5, ay = Math.round(Y(0)) + 0.5;
+    ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1.4; ctx.beginPath();
+    line(0, ay, W, ay); line(ax, 0, ax, H); ctx.stroke();
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const labelY = Math.min(Math.max(ay + 4, 4), H - 16);
+    for (let v = Math.ceil(xmin); v <= xmax; v += step) if (v !== 0) ctx.fillText(String(v), X(v), labelY);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    const labelX = Math.min(Math.max(ax - 6, 30), W - 4);
+    for (let v = Math.ceil(ymin); v <= ymax; v += step) if (v !== 0) ctx.fillText(String(v), labelX, Y(v));
+    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillText('0', Math.min(Math.max(ax - 5, 12), W - 4), labelY);
+
+    // y = x^3 - 3x
+    ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2.1; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    let pen = false;
+    for (let px = 0; px <= W; px += 1) {
+      const x = (px - W / 2) / scale, y = x * x * x - 3 * x, py = Y(y);
+      if (py < -1e4 || py > H + 1e4) { pen = false; continue; }
+      if (!pen) { ctx.moveTo(px, py); pen = true; } else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // sin(x)^2 + sin(y)^2 = 0  →  (nπ, mπ)
+    const pts = [];
+    for (let n = Math.ceil(xmin / Math.PI); n <= xmax / Math.PI; n++)
+      for (let m = Math.ceil(ymin / Math.PI); m <= ymax / Math.PI; m++) pts.push([n * Math.PI, m * Math.PI]);
+    for (const [x, y] of pts) {
+      ctx.beginPath(); ctx.arc(X(x), Y(y), 4.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#2563eb'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+    }
+
+    const span = xmax - xmin;
+    const t = (v) => (Math.round(v * 1000) / 1000).toString();
+    const next = `x ∈ [${t(xmin)}, ${t(xmax)}]  ·  1칸 ≈ ${t(span / 10)}  ·  4ms  ·  점 ${pts.length}개`;
+    if (next !== this.status) { this.status = next; this.forceUpdate(); }
+  }
+
+  renderVals() {
+    return { boardRef: this.attach, statusText: this.status };
+  }
+}
+</script>
+</body>
+</html>
