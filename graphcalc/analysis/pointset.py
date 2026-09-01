@@ -20,16 +20,22 @@ from ..core.symbols import sym
 
 _N = sym("n")
 from ..objects.sequence import Sequence
-from .exactness import all_same, is_zero, light, same, tidy
+from .exactness import all_same, is_zero, light, norm, probably_zero, same, tidy
 from .finding import Report, fact, guess
-from .invariant import find_invariant
+from .invariant import MAX_DEGREE, find_invariant
 from .sequence import analyze_sequence, difference_table
 
 MAXN = 16
 
 
-def analyze_points(points, *, index=None, title="Pₙ", split=None) -> Report:
-    """points: [(n, x, y)] 또는 [(x, y)] — 좌표는 SymPy 식(정확값)."""
+def analyze_points(points, *, index=None, title="Pₙ", split=None, pool=None) -> Report:
+    """점열을 살핀다.
+
+    @param points 화면과 표에 쓸 점. [(n, x, y)] 또는 [(x, y)] — 좌표는 정확한 식.
+    @param pool   관계식을 찾는 데만 더 쓸 점. 3차 이상의 관계를 말하려면
+                  단항식 수보다 점이 넉넉해야 하는데, 표에 스무 줄을 늘어놓을
+                  까닭은 없으므로 찾는 데 쓸 점을 따로 받는다.
+    """
     pts = []
     for p in points:
         if len(p) == 3:
@@ -61,9 +67,12 @@ def analyze_points(points, *, index=None, title="Pₙ", split=None) -> Report:
     _steps(rep, xs, ys, k)
     _radius(rep, ns, xs, ys)
     _symmetry(rep, xs, ys)
-    _translation(rep, xs, ys, k)
-    _rotation(rep, xs, ys, k)
-    _relation(rep, xs, ys, k)
+    moved = _translation(rep, xs, ys, k)
+    if not moved:
+        # 평행이동으로 이미 설명된 점열에 2×2 행렬까지 붙이면 군더더기다.
+        # 같은 말을 두 번 하는 셈이고, 행렬 쪽이 오히려 알아보기 어렵다.
+        _rotation(rep, xs, ys, k)
+    _relation(rep, xs, ys, k, pool)
     _collinear(rep, xs, ys)
     return rep
 
@@ -104,10 +113,10 @@ def _steps(rep, xs, ys, k):
     """걸음의 길이와 기울기, 돌아간 각."""
     steps = [(light(xs[i + 1] - xs[i]), light(ys[i + 1] - ys[i]))
              for i in range(len(xs) - 1)]
-    # 제곱을 먼저 정리하고 나서 √ 를 씌운다. √ 안에 든 채로 정리하면 훨씬 느리다
-    dists = [sympy.sqrt(sympy.simplify(a ** 2 + b ** 2)) for a, b in steps]
+    sq = [light(a ** 2 + b ** 2) for a, b in steps]
+    dists, equal = _lengths(sq)
     rep.tables.append(("걸음", ["|ΔPₙ|"], [[pretty(d) for d in dists]]))
-    if len(dists) >= 2 and all_same(dists):
+    if len(dists) >= 2 and equal:
         rep.add(fact(f"걸음의 길이가 모두 {pretty(dists[0])} 로 같습니다", weight=86,
                      derivation="이웃한 두 점 사이의 거리를 정확히 계산해 견주었습니다."))
     slopes = []
@@ -129,12 +138,32 @@ def _steps(rep, xs, ys, k):
 
 
 def _radius(rep, ns, xs, ys):
-    rs = [sympy.sqrt(sympy.simplify(x ** 2 + y ** 2)) for x, y in zip(xs, ys)]
+    rs, equal = _lengths([light(x ** 2 + y ** 2) for x, y in zip(xs, ys)])
     rep.tables.append(("원점에서의 거리 |Pₙ|", ["n"] + [str(n) for n in ns],
                        [["|Pₙ|"] + [pretty(r) for r in rs]]))
-    if all_same(rs):
+    if equal:
         rep.add(fact(f"모든 점이 원점에서 같은 거리 {pretty(rs[0])} 에 있습니다 — 원 위의 점입니다",
                      weight=95, derivation="√(xₙ² + yₙ²) 를 정확히 계산해 견주었습니다."))
+
+
+def _lengths(squares):
+    """제곱값 목록 → (거리 목록, 모두 같은가).
+
+    **먼저 줄이고 나서 견준다.** 안 줄인 채로 견주면 "이 둘이 같은가" 를 묻는
+    물음마다 삼각함수 항등식을 훑게 되어, 줄이는 것보다 훨씬 비싸진다.
+    제곱을 다 줄인 뒤에 √ 를 씌우는 것도 같은 까닭이다 — √ 안에 든 채로
+    정리하면 훨씬 느리다.
+    """
+    if not squares:
+        return [], True
+    # 같은지부터 묻는다. is_zero 가 수치로 먼저 거르므로, 다르면 여기서 끝난다.
+    if all_same(squares):
+        d = sympy.sqrt(norm(squares[0]))          # 같으니 한 번만 줄이면 된다
+        return [d] * len(squares), True
+    # 다 다르다면 굳이 다듬지 않는다. √(1 + (sin 2 − sin 1)²) 는 그대로도
+    # 읽을 만하고 값도 정확하다. 줄지도 않을 식을 여덟 번 정리하느라
+    # 열 몇 초를 쓰는 것이 훨씬 나쁘다.
+    return [sympy.sqrt(q) for q in squares], False
 
 
 def _symmetry(rep, xs, ys):
@@ -155,43 +184,50 @@ def _symmetry(rep, xs, ys):
             rep.add(fact("본 점들이 원점에 대해 대칭입니다", weight=70))
 
 
-def _translation(rep, xs, ys, k):
-    """Pₙ₊₁ = Pₙ + v 인가."""
+def _translation(rep, xs, ys, k) -> bool:
+    """Pₙ₊₁ = Pₙ + v 인가. 그렇다면 참을 돌려준다."""
     if len(xs) < 4:
-        return
+        return False
     vx = light(xs[1] - xs[0])
     vy = light(ys[1] - ys[0])
     for i in range(k - 1):
         if not is_zero(xs[i + 1] - xs[i] - vx) or not is_zero(ys[i + 1] - ys[i] - vy):
-            return
+            return False
     ok = sum(1 for i in range(k - 1, len(xs) - 1)
              if is_zero(xs[i + 1] - xs[i] - vx) and is_zero(ys[i + 1] - ys[i] - vy))
     rep.add(guess(f"평행이동 — Pₙ₊₁ = Pₙ + ({pretty(vx)}, {pretty(vy)})",
                   used=k, checked=len(xs) - k, passed=ok, weight=92,
                   derivation=f"앞의 {k}개 점에서 걸음벡터가 늘 같았습니다. "
                              "그 규칙을 나머지 점에 넣어 확인했습니다."))
+    return True
 
 
 def _rotation(rep, xs, ys, k):
     """Pₙ₊₁ = R·Pₙ 인가 (회전과 크기 변화를 함께)."""
     if len(xs) < 5:
         return
-    a, b, c, d = sympy.symbols("a b c d")
-    eqs = []
-    for i in range(2):
-        eqs += [sympy.Eq(xs[i + 1], a * xs[i] + b * ys[i]),
-                sympy.Eq(ys[i + 1], c * xs[i] + d * ys[i])]
+    # M·[P₀ P₁] = [P₁ P₂] 이므로 M = [P₁ P₂]·[P₀ P₁]⁻¹ 이다.
+    # 미지수 넷을 sympy.solve 로 푸는 것보다 2×2 행렬을 바로 뒤집는 편이 빠르다.
+    src = sympy.Matrix([[xs[0], xs[1]], [ys[0], ys[1]]])
+    dst = sympy.Matrix([[xs[1], xs[2]], [ys[1], ys[2]]])
+    det = tidy(light(src.det()))     # 이건 나눗셈에 쓰이니 먼저 줄여 둔다
+    if is_zero(det):
+        return                    # 앞의 두 점이 원점과 한 줄에 있어 정할 수 없다
     try:
-        sol = sympy.solve(eqs, [a, b, c, d], dict=True)
+        M = dst * src.adjugate() / det
     except Exception:
         return
-    if not sol:
+    A, B, C, D = (light(M[0, 0]), light(M[0, 1]), light(M[1, 0]), light(M[1, 1]))
+    if any(getattr(v, "free_symbols", set()) for v in (A, B, C, D)):
         return
-    M = sol[0]
-    A, B, C, D = (M.get(a), M.get(b), M.get(c), M.get(d))
-    if None in (A, B, C, D) or any(v.free_symbols for v in (A, B, C, D)):
+    # 다듬기 전에 **한 점으로, 수치로만** 걸러 낸다. 행렬은 앞의 두 점으로
+    # 맞췄으니 세 번째 점이 첫 시험대다. 여기서 어긋나면 다듬을 값어치가 없고,
+    # 들어맞더라도 증명은 다듬은 뒤에 하는 편이 훨씬 싸다.
+    if not probably_zero(xs[3] - A * xs[2] - B * ys[2]) or \
+       not probably_zero(ys[3] - C * xs[2] - D * ys[2]):
         return
-    A, B, C, D = (tidy(v) for v in (A, B, C, D))
+    # 살아남았으면 이제 다듬는다. 다듬어 둔 쪽이 나머지 확인도 훨씬 싸다.
+    A, B, C, D = (tidy(A), tidy(B), tidy(C), tidy(D))
     for i in range(k - 1):
         if not is_zero(xs[i + 1] - A * xs[i] - B * ys[i]) or \
            not is_zero(ys[i + 1] - C * xs[i] - D * ys[i]):
@@ -214,17 +250,32 @@ def _rotation(rep, xs, ys, k):
                              "성립하는지 확인했습니다."))
 
 
-def _relation(rep, xs, ys, k):
+def _relation(rep, xs, ys, k, pool=None):
     """모든 점이 함께 만족하는 대수적 관계."""
     pts = list(zip(xs, ys))
-    inv = find_invariant(pts[:k], pts[k:])
+    wide = _as_pairs(pool) if pool else []
+    # 찾는 데는 넓은 쪽을, 확인에는 그 뒤를 쓴다. 넓은 쪽이 없으면 본 점을 나눈다.
+    search = wide or pts[:k]
+    verify = pts[k:] if not wide else []
+    inv = find_invariant(search, verify)
     if inv is None:
-        rep.notes.append("총차수 3 이하에서는 모든 점이 함께 만족하는 관계를 찾지 못했습니다.")
+        rep.notes.append(f"총차수 {MAX_DEGREE} 이하에서는 모든 점이 함께 만족하는 관계를 "
+                         f"찾지 못했습니다 (점 {len(search) + len(verify)}개로 살폈습니다).")
         return
     rep.add(guess(f"모든 점이 {inv.text} 을 만족합니다",
                   used=inv.used, checked=inv.checked, passed=inv.passed, weight=99,
                   derivation=inv.derivation))
     _name_curve(rep, inv.expr)
+
+
+def _as_pairs(points):
+    out = []
+    for q in points:
+        if len(q) == 3:
+            out.append((sympy.sympify(q[1]), sympy.sympify(q[2])))
+        else:
+            out.append((sympy.sympify(q[0]), sympy.sympify(q[1])))
+    return out
 
 
 def _name_curve(rep, expr):
@@ -234,10 +285,12 @@ def _name_curve(rep, expr):
         p = sympy.Poly(sympy.expand(expr), x, y)
     except Exception:
         return
-    if p.total_degree() == 1:
+    deg = p.total_degree()
+    if deg == 1:
         rep.add(fact("그 관계는 **직선**의 식입니다", weight=60))
         return
-    if p.total_degree() != 2:
+    if deg != 2:
+        _name_higher(rep, expr, p, deg, x, y)
         return
     A = p.coeff_monomial(x ** 2)
     B = p.coeff_monomial(x * y)
@@ -252,6 +305,48 @@ def _name_curve(rep, expr):
         rep.add(fact(f"그 관계는 **{name}**의 식입니다", weight=60))
     elif disc.is_positive:
         rep.add(fact("그 관계는 **쌍곡선**의 식입니다", weight=60))
+
+
+def _name_higher(rep, expr, poly, deg, x, y):
+    """3차 이상의 곡선에 이름을 붙여 본다."""
+    dy = sympy.Poly(expr, y).degree()
+    if dy == 1:
+        sol = sympy.solve(sympy.Eq(expr, 0), y)
+        if len(sol) == 1:
+            rep.add(fact(f"그 관계는 **{deg}차 함수의 그래프**입니다 — y = {pretty(sympy.expand(sol[0]))}",
+                         weight=62))
+            return
+    if dy == 2 and deg == 3:
+        # y² = (x 의 3차식) 꼴이면 판별식으로 매끈한지 아닌지가 갈린다
+        rhs = _as_y2(expr, x, y)
+        if rhs is not None:
+            disc = sympy.simplify(sympy.discriminant(sympy.Poly(rhs, x)))
+            if disc != 0:
+                rep.add(fact("그 관계는 **타원곡선**의 식입니다 (특이점이 없는 3차곡선)",
+                             weight=62,
+                             derivation=f"y² = {pretty(rhs)} 꼴이고, 오른쪽 3차식의 판별식이 "
+                                        f"{pretty(disc)} 로 0 이 아니므로 매끈합니다."))
+            else:
+                rep.add(fact("그 관계는 **특이점을 가진 3차곡선**의 식입니다 (첨점이나 마디가 있습니다)",
+                             weight=62,
+                             derivation="y² = (x 의 3차식) 꼴인데 오른쪽 3차식에 중근이 있습니다."))
+            return
+    rep.add(fact(f"그 관계는 **{deg}차 대수곡선**의 식입니다", weight=60,
+                 derivation=f"x, y 에 대한 총차수가 {deg} 입니다."))
+
+
+def _as_y2(expr, x, y):
+    """식이 y² − g(x) = 0 꼴이면 g(x), 아니면 None."""
+    try:
+        p = sympy.Poly(expr, y)
+    except Exception:
+        return None
+    if p.degree() != 2 or p.coeff_monomial(y) != 0:
+        return None
+    a2 = p.coeff_monomial(y ** 2)
+    if a2 == 0 or a2.free_symbols:
+        return None
+    return sympy.expand(-p.coeff_monomial(1) / a2)
 
 
 def _collinear(rep, xs, ys):

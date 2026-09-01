@@ -74,7 +74,8 @@ def test_어떻게_구했는지_적는다():
 # ── 점열
 
 def test_원_위의_점열():
-    r = analyze_points(points_of(sympy.cos(n), sympy.sin(n)))
+    r = analyze_points(points_of(sympy.cos(n), sympy.sin(n)),
+                       pool=points_of(sympy.cos(n), sympy.sin(n), 24))
     assert has(r, "x² + y² = 1")
     assert has(r, "원점에서 같은 거리 1")
     assert has(r, "회전")
@@ -101,10 +102,59 @@ def test_평행이동():
 def test_관계가_없으면_없다고_말한다():
     r = analyze_points(points_of(2 ** n, sympy.factorial(n), 10))
     assert not has(r, "모든 점이")
+    assert not has(r, "모든 점이")
     assert any("찾지 못했습니다" in s for s in r.notes)
 
 
 # ── 관계식 찾기
+
+def test_높은_차수의_관계도_찾는다():
+    """점이 넉넉하면 3차 이상의 관계도 찾아낸다."""
+    def pts(fx, fy, m):
+        return [(sympy.simplify(fx.subs(n, k)), sympy.simplify(fy.subs(n, k)))
+                for k in range(1, m + 1)]
+    for fx, fy, m, want, deg in [
+            (n, n ** 3, 30, "y = x³", 3),
+            (n, n ** 4, 40, "y = x⁴", 4),
+            (n, n ** 5, 50, "y = x⁵", 5),
+            (n ** 2, n ** 3, 30, "x³ - y² = 0", 3),
+            (sympy.cos(n), sympy.cos(3 * n), 40, "y = 4x³ - 3x", 3)]:
+        inv = find_invariant(pts(fx, fy, m), [])
+        assert inv is not None, want
+        assert inv.text == want
+        assert inv.degree == deg
+        assert inv.checked > 0 and inv.passed == inv.checked
+
+
+def test_점이_모자라면_말하지_않는다():
+    """단항식 수만큼만 점이 있으면 관계는 늘 찾아진다 — 그건 발견이 아니다."""
+    from graphcalc.analysis.invariant import margin, monomials
+    assert margin(len(monomials(3))) >= 3
+    P = [(sympy.Integer(k), sympy.Integer(k) ** 3) for k in range(1, 12)]
+    assert find_invariant(P, []) is None          # 3차를 말하기엔 점이 모자라다
+    P = [(sympy.Integer(k), sympy.Integer(k) ** 3) for k in range(1, 25)]
+    assert find_invariant(P, []).text == "y = x³"
+
+
+def test_아무_관계_없는_점에는_높은_차수도_붙이지_않는다():
+    import random
+    random.seed(7)
+    rnd = [(sympy.Rational(random.randint(-40, 40), 7),
+            sympy.Rational(random.randint(-40, 40), 5)) for _ in range(60)]
+    assert find_invariant(rnd, []) is None
+
+
+def test_곡선의_이름():
+    def pts(fx, fy, m=30):
+        return [(k, sympy.simplify(fx.subs(n, k)), sympy.simplify(fy.subs(n, k)))
+                for k in range(1, m + 1)]
+    r = analyze_points(pts(n ** 2, n ** 3)[:14], pool=pts(n ** 2, n ** 3))
+    assert has(r, "특이점을 가진 3차곡선")
+    ell = [(k, sympy.Integer(k), sympy.sqrt(sympy.Integer(k) ** 3 - 2 * k + 1))
+           for k in range(2, 40)]
+    r = analyze_points(ell[:14], pool=ell)
+    assert has(r, "타원곡선")
+
 
 def test_불변량_찾기():
     def pts(fx, fy, m=20):

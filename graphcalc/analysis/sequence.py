@@ -13,7 +13,8 @@ from ..core.display import pretty
 from ..core.symbols import sym
 
 _N = sym("n")
-from .exactness import all_same, is_zero, light, same
+from .exactness import (all_same, is_zero, light, probably_zero, same,
+                        tidy as _tidy)
 from .finding import Report, fact, guess
 
 MAX_DIFF_LEVEL = 6
@@ -232,6 +233,16 @@ def _periodic(rep, ns, vs):
             return
 
 
+def _fits(fv, resid, order, exact=True) -> bool:
+    """점화식 후보가 앞의 항들에 들어맞는가.
+
+    exact=False 면 수치로만 본다 — 가망 없는 후보를 싸게 쳐내는 용도이고,
+    결론으로 삼지 않는다. 결론에 쓰는 확인은 늘 exact=True 다.
+    """
+    test = is_zero if exact else probably_zero
+    return all(test(resid(i)) for i in range(len(fv) - order))
+
+
 def _recurrence(rep, fn, fv, hn, hv):
     """a_{n+1} = p·aₙ + q  와  a_{n+2} = p·a_{n+1} + q·aₙ 를 정확히 풀어 본다."""
     n = _N
@@ -245,7 +256,7 @@ def _recurrence(rep, fn, fv, hn, hv):
         if sol:
             P, Q = sol[0].get(p), sol[0].get(q)
             if P is not None and Q is not None and \
-               all(is_zero(fv[i + 1] - P * fv[i] - Q) for i in range(len(fv) - 1)):
+               _fits(fv, lambda i: fv[i + 1] - P * fv[i] - Q, 1):
                 if not (P == 1 and Q == 0):
                     ok = sum(1 for i in range(len(hv))
                              if is_zero(hv[i] - P * (hv[i - 1] if i else fv[-1]) - Q))
@@ -263,11 +274,14 @@ def _recurrence(rep, fn, fv, hn, hv):
             sol = []
         if sol:
             P, Q = sol[0].get(p), sol[0].get(q)
-            if P is not None and Q is not None:
+            # 다듬기 전에 **수치로 먼저 걸러 낸다.** 어긋나는 후보를 예쁘게 만드는
+            # 것은 헛일이고, 들어맞는 후보라면 다듬은 뒤에 증명하는 편이 훨씬 싸다.
+            if P is not None and Q is not None and \
+                    _fits(fv, lambda i: fv[i + 2] - P * fv[i + 1] - Q * fv[i], 2,
+                          exact=False):
                 P, Q = _tidy(P), _tidy(Q)
             if P is not None and Q is not None and \
-               all(is_zero(fv[i + 2] - P * fv[i + 1] - Q * fv[i])
-                   for i in range(len(fv) - 2)):
+               _fits(fv, lambda i: fv[i + 2] - P * fv[i + 1] - Q * fv[i], 2):
                 seq_all = fv + hv
                 ok = sum(1 for i in range(len(fv) - 2, len(seq_all) - 2)
                          if is_zero(seq_all[i + 2] - P * seq_all[i + 1] - Q * seq_all[i]))
@@ -276,21 +290,6 @@ def _recurrence(rep, fn, fv, hn, hv):
                               used=len(fv), checked=max(0, len(hv)), passed=ok, weight=88,
                               derivation="앞의 세 항으로 p, q 를 정확히 풀고, 나머지 항에서 "
                                          "그 식이 성립하는지 확인했습니다."))
-
-
-def _tidy(v):
-    """(cos 3 − cos 1)/(cos 2 − 1) 은 사실 2cos 1 이다. 지수꼴로 한 번 돌리면 풀린다."""
-    best = v
-    for f in (lambda e: sympy.simplify(e),
-              lambda e: sympy.simplify(e.rewrite(sympy.exp)),
-              lambda e: sympy.simplify(sympy.trigsimp(e, method="fu"))):
-        try:
-            c = f(v)
-        except Exception:
-            continue
-        if sympy.count_ops(c) < sympy.count_ops(best):
-            best = c
-    return best
 
 
 def _closed_form(rep, seq, ns, vs):

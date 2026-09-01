@@ -45,13 +45,15 @@ class Domain:
 
     def text(self) -> str:
         base = NAMES.get(self.base, str(self.base))
-        if self.lo is None and self.hi is None:
-            s = f"{self.var} ∈ {base}"
-        else:
-            from .display import pretty
-            lo = pretty(self.lo) if self.lo is not None else "−∞"
-            hi = pretty(self.hi) if self.hi is not None else "∞"
-            s = f"{self.var} ∈ {base}, {lo} ≤ {self.var} ≤ {hi}"
+        from .display import pretty
+        s = f"{self.var} ∈ {base}"
+        # 한쪽만 정해졌으면 한쪽만 적는다. "1 ≤ n ≤ ∞" 는 ∞ 를 값처럼 적은 셈이다
+        if self.lo is not None and self.hi is not None:
+            s += f", {pretty(self.lo)} ≤ {self.var} ≤ {pretty(self.hi)}"
+        elif self.lo is not None:
+            s += f", {self.var} ≥ {pretty(self.lo)}"
+        elif self.hi is not None:
+            s += f", {self.var} ≤ {pretty(self.hi)}"
         return s + (" (기본값)" if self.implied else "")
 
     def contains(self, v) -> bool:

@@ -21,7 +21,8 @@ from .function import analyze_function
 from .pointset import analyze_points
 from .sequence import analyze_sequence
 
-MAX_TERMS = 14
+MAX_TERMS = 14        # 표와 그림에 쓸 항
+POOL_TERMS = 60       # 관계식을 찾는 데만 더 쓸 항 — 차수가 높을수록 점이 많이 든다
 
 
 def analyze(obj: MathObject, view=None) -> Report:
@@ -52,12 +53,13 @@ def _dispatch(obj: MathObject, view) -> Report:
     if k == "sequence" and obj.seq is not None:
         return analyze_sequence(obj.seq, count=MAX_TERMS)
     if k == "pointseq" and obj.pseq is not None:
-        pts = obj.pseq.points(obj.pseq.start(), obj.pseq.start() + MAX_TERMS - 1)
-        return analyze_points(pts, title=obj.label)
+        lo = obj.pseq.start()
+        pool = obj.pseq.points(lo, lo + POOL_TERMS - 1)
+        return analyze_points(pool[:MAX_TERMS], title=obj.label, pool=pool)
     if k in ("list", "point") and obj.solution is not None:
         pts = getattr(obj.solution, "points", [])
         if len(pts) >= 2:
-            return analyze_points(pts, title=obj.label)
+            return analyze_points(pts[:MAX_TERMS], title=obj.label, pool=pts)
         return _single_point(obj, pts)
     if k in ("function", "function_x"):
         return analyze_function(obj.expr, obj.var, view=view, title=obj.label)
@@ -218,7 +220,8 @@ def _lattice(obj, view):
                          derivation="디오판토스 방정식으로 풀었더니 해가 유한개였습니다. "
                                     "화면 밖까지 통틀어 이것뿐입니다."))
     if len(sols) >= 3:
-        sub = analyze_points([(a, b) for a, b in sols], title=obj.label)
+        pts = [(a, b) for a, b in sols]
+        sub = analyze_points(pts[:MAX_TERMS], title=obj.label, pool=pts)
         for f in sub.all():
             if f.weight >= 60 and "점 " not in f.text[:3]:
                 rep.add(f)

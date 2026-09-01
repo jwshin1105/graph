@@ -30,6 +30,8 @@ from ..core.display import pretty
 
 from ..core.symbols import X, Y
 
+MAX_DEGREE = 6      # 여기까지 살핀다. 더 올리려면 점이 훨씬 많이 있어야 한다
+
 
 @dataclass
 class Invariant:
@@ -50,16 +52,43 @@ def monomials(d):
     return out                      # (0,0) (1,0) (0,1) (2,0) (1,1) (0,2) …
 
 
-def find_invariant(fit_points, check_points=(), max_degree=3, dps=40):
-    """fit_points 로 관계를 찾고, check_points 로 확인한다. 좌표는 SymPy 식."""
-    fit = [p for p in fit_points if _finite(p)]
-    if len(fit) < 3:
+def margin(k: int) -> int:
+    """단항식이 k 개일 때 몇 점이 더 있어야 "우연히 맞은" 관계를 걸러 낼 수 있는가.
+
+    점 스무 개는 오차 없이 지나는 5차 곡선이 언제나 있다. 단항식 수만큼 점이
+    있으면 관계는 **반드시** 찾아진다 — 그건 발견이 아니라 셈의 결과일 뿐이다.
+    그래서 차수가 올라갈수록 여유분도 함께 늘린다.
+    """
+    return max(3, k // 2)
+
+
+def find_invariant(points, check_points=(), max_degree=MAX_DEGREE, dps=None):
+    """점들이 함께 만족하는 관계를 찾는다.
+
+    낮은 차수부터 올라가며, **차수마다 필요한 만큼만** 점을 쓴다. 1·2차는
+    아홉 점이면 되므로 대개 여기서 끝나고, 3차 이상으로 올라갈 때에만
+    점을 더 꺼내 쓴다. 그래서 흔한 경우는 빠르고, 필요할 때는 깊이 간다.
+
+    @param points        관계를 찾고 확인하는 데 쓸 점 (많을수록 높은 차수까지 본다)
+    @param check_points  확인에만 쓸 점 (앞의 것으로 모자랄 때 보탠다)
+    """
+    pool = [p for p in points if _finite(p)]
+    spare = [p for p in check_points if _finite(p)]
+    if len(pool) < 6:
+        pool = pool + spare
+        spare = []
+    if len(pool) < 3:
         return None
     for d in range(1, max_degree + 1):
         basis = monomials(d)
-        if len(fit) < len(basis) + 2:
-            break
-        inv = _try_degree(fit, check_points, basis, d, dps)
+        need = len(basis) + margin(len(basis))
+        if len(pool) + len(spare) < need + 3:
+            break                       # 이 차수를 말하려면 점이 모자란다
+        fit = pool[:need] if len(pool) >= need else pool + spare[:need - len(pool)]
+        rest = pool[len(fit):] + spare if len(pool) >= need else spare[need - len(pool):]
+        # 차수가 오르면 x⁶ 처럼 크기가 벌어져 행렬이 나빠진다. 자릿수를 함께 올린다
+        work = dps or (30 + 8 * d)
+        inv = _try_degree(fit, rest[:12], basis, d, work)
         if inv is not None:
             return inv
     return None
@@ -123,11 +152,13 @@ def _try_degree(fit, check, basis, d, dps):
         degree=d, expr=expr, text=_relation_text(expr),
         used=len(fit), checked=len(others), passed=passed,
         derivation=f"총차수 {d} 이하의 단항식 {len(basis)}개로 행렬을 만들어, 가장 작은 "
-                   f"특이값에 딸린 벡터를 {40}자리로 구했습니다. 그 계수를 유리수로 되돌린 뒤 "
+                   f"특이값에 딸린 벡터를 {dps}자리로 구했습니다. 단항식 {len(basis)}개에 점을 "
+                   f"{len(fit)}개 썼으니 여유분이 {len(fit) - len(basis)}개입니다 — 점이 단항식 수만큼밖에 "
+                   f"없으면 관계는 늘 찾아지므로 그만큼 넉넉히 두었습니다. 계수를 유리수로 되돌린 뒤 "
                    f"**정확한 좌표**를 넣어 정말 0 이 되는지 다시 확인했습니다.")
 
 
-def _rationalize(v, max_den=64, tol=1e-9):
+def _rationalize(v, max_den=512, tol=1e-8):
     x = float(v)
     if abs(x) < 1e-9:
         return sympy.Integer(0)
