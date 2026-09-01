@@ -20,6 +20,7 @@ from ..core.symbols import sym
 
 _N = sym("n")
 from ..objects.sequence import Sequence
+from .exactness import all_same, is_zero, light, same, tidy
 from .finding import Report, fact, guess
 from .invariant import find_invariant
 from .sequence import analyze_sequence, difference_table
@@ -82,36 +83,37 @@ def _coordinate_rules(rep, ns, xs, ys, k):
 
 
 def _differences(rep, ns, xs, ys):
-    dx = [sympy.simplify(xs[i + 1] - xs[i]) for i in range(len(xs) - 1)]
-    dy = [sympy.simplify(ys[i + 1] - ys[i]) for i in range(len(ys) - 1)]
+    dx = [light(xs[i + 1] - xs[i]) for i in range(len(xs) - 1)]
+    dy = [light(ys[i + 1] - ys[i]) for i in range(len(ys) - 1)]
     rep.tables.append(("1차 차분 ΔPₙ = Pₙ₊₁ − Pₙ",
                        ["n"] + [str(n) for n in ns[:-1]],
                        [["Δx"] + [pretty(v) for v in dx],
                         ["Δy"] + [pretty(v) for v in dy]]))
     if len(dx) >= 2:
-        d2x = [sympy.simplify(dx[i + 1] - dx[i]) for i in range(len(dx) - 1)]
-        d2y = [sympy.simplify(dy[i + 1] - dy[i]) for i in range(len(dy) - 1)]
+        d2x = [light(dx[i + 1] - dx[i]) for i in range(len(dx) - 1)]
+        d2y = [light(dy[i + 1] - dy[i]) for i in range(len(dy) - 1)]
         rep.tables.append(("2차 차분 Δ²Pₙ", ["n"] + [str(n) for n in ns[:-2]],
                            [["Δ²x"] + [pretty(v) for v in d2x],
                             ["Δ²y"] + [pretty(v) for v in d2y]]))
-        if all(v == 0 for v in d2x) and all(v == 0 for v in d2y):
+        if all(is_zero(v) for v in d2x) and all(is_zero(v) for v in d2y):
             rep.add(fact("2차 차분이 모두 0 입니다 — 본 점들은 일정한 걸음으로 나아갑니다",
                          weight=88, derivation="ΔPₙ 이 모두 같다는 뜻입니다."))
 
 
 def _steps(rep, xs, ys, k):
     """걸음의 길이와 기울기, 돌아간 각."""
-    steps = [(sympy.simplify(xs[i + 1] - xs[i]), sympy.simplify(ys[i + 1] - ys[i]))
+    steps = [(light(xs[i + 1] - xs[i]), light(ys[i + 1] - ys[i]))
              for i in range(len(xs) - 1)]
-    dists = [sympy.simplify(sympy.sqrt(a ** 2 + b ** 2)) for a, b in steps]
+    # 제곱을 먼저 정리하고 나서 √ 를 씌운다. √ 안에 든 채로 정리하면 훨씬 느리다
+    dists = [sympy.sqrt(sympy.simplify(a ** 2 + b ** 2)) for a, b in steps]
     rep.tables.append(("걸음", ["|ΔPₙ|"], [[pretty(d) for d in dists]]))
-    if len(set(map(sympy.srepr, dists))) == 1 and len(dists) >= 2:
+    if len(dists) >= 2 and all_same(dists):
         rep.add(fact(f"걸음의 길이가 모두 {pretty(dists[0])} 로 같습니다", weight=86,
                      derivation="이웃한 두 점 사이의 거리를 정확히 계산해 견주었습니다."))
     slopes = []
     for a, b in steps:
-        slopes.append(sympy.simplify(b / a) if a != 0 else sympy.oo)
-    if len(set(map(sympy.srepr, slopes))) == 1 and len(slopes) >= 2:
+        slopes.append(light(b / a) if not is_zero(a) else sympy.oo)
+    if len(slopes) >= 2 and all_same(slopes):
         rep.add(fact(f"이웃한 점을 잇는 기울기가 모두 {pretty(slopes[0])} 입니다", weight=86,
                      derivation="Δy/Δx 를 정확히 계산해 견주었습니다."))
     # 돌아간 각
@@ -120,29 +122,31 @@ def _steps(rep, xs, ys, k):
         for i in range(len(steps) - 1):
             a1 = sympy.atan2(steps[i][1], steps[i][0])
             a2 = sympy.atan2(steps[i + 1][1], steps[i + 1][0])
-            angs.append(sympy.simplify(a2 - a1))
-        if len(set(map(sympy.srepr, angs))) == 1:
+            angs.append(light(a2 - a1))
+        if all_same(angs):
             rep.add(fact(f"걸음의 방향이 늘 같은 각 {pretty(angs[0])} 만큼 돌아갑니다",
                          weight=84, derivation="이웃한 걸음벡터의 방향각 차를 구했습니다."))
 
 
 def _radius(rep, ns, xs, ys):
-    rs = [sympy.simplify(sympy.sqrt(x ** 2 + y ** 2)) for x, y in zip(xs, ys)]
+    rs = [sympy.sqrt(sympy.simplify(x ** 2 + y ** 2)) for x, y in zip(xs, ys)]
     rep.tables.append(("원점에서의 거리 |Pₙ|", ["n"] + [str(n) for n in ns],
                        [["|Pₙ|"] + [pretty(r) for r in rs]]))
-    if len(set(map(sympy.srepr, rs))) == 1:
+    if all_same(rs):
         rep.add(fact(f"모든 점이 원점에서 같은 거리 {pretty(rs[0])} 에 있습니다 — 원 위의 점입니다",
                      weight=95, derivation="√(xₙ² + yₙ²) 를 정확히 계산해 견주었습니다."))
 
 
 def _symmetry(rep, xs, ys):
-    pts = set((sympy.srepr(sympy.simplify(x)), sympy.srepr(sympy.simplify(y)))
-              for x, y in zip(xs, ys))
+    pairs = list(zip(xs, ys))
+
     def has(fx, fy):
-        return all((sympy.srepr(sympy.simplify(fx(x, y))),
-                    sympy.srepr(sympy.simplify(fy(x, y)))) in pts
-                   for x, y in zip(xs, ys))
-    if len(pts) >= 3:
+        for x, y in pairs:
+            tx, ty = fx(x, y), fy(x, y)
+            if not any(same(tx, a) and same(ty, b) for a, b in pairs):
+                return False
+        return True
+    if len(pairs) >= 3:
         if has(lambda x, y: x, lambda x, y: -y):
             rep.add(fact("본 점들이 x축에 대해 대칭입니다", weight=70))
         if has(lambda x, y: -x, lambda x, y: y):
@@ -155,15 +159,13 @@ def _translation(rep, xs, ys, k):
     """Pₙ₊₁ = Pₙ + v 인가."""
     if len(xs) < 4:
         return
-    vx = sympy.simplify(xs[1] - xs[0])
-    vy = sympy.simplify(ys[1] - ys[0])
+    vx = light(xs[1] - xs[0])
+    vy = light(ys[1] - ys[0])
     for i in range(k - 1):
-        if sympy.simplify(xs[i + 1] - xs[i] - vx) != 0 or \
-           sympy.simplify(ys[i + 1] - ys[i] - vy) != 0:
+        if not is_zero(xs[i + 1] - xs[i] - vx) or not is_zero(ys[i + 1] - ys[i] - vy):
             return
     ok = sum(1 for i in range(k - 1, len(xs) - 1)
-             if sympy.simplify(xs[i + 1] - xs[i] - vx) == 0
-             and sympy.simplify(ys[i + 1] - ys[i] - vy) == 0)
+             if is_zero(xs[i + 1] - xs[i] - vx) and is_zero(ys[i + 1] - ys[i] - vy))
     rep.add(guess(f"평행이동 — Pₙ₊₁ = Pₙ + ({pretty(vx)}, {pretty(vy)})",
                   used=k, checked=len(xs) - k, passed=ok, weight=92,
                   derivation=f"앞의 {k}개 점에서 걸음벡터가 늘 같았습니다. "
@@ -189,16 +191,16 @@ def _rotation(rep, xs, ys, k):
     A, B, C, D = (M.get(a), M.get(b), M.get(c), M.get(d))
     if None in (A, B, C, D) or any(v.free_symbols for v in (A, B, C, D)):
         return
-    A, B, C, D = (sympy.simplify(sympy.expand_trig(v.rewrite(sympy.exp))) for v in (A, B, C, D))
+    A, B, C, D = (tidy(v) for v in (A, B, C, D))
     for i in range(k - 1):
-        if sympy.simplify(xs[i + 1] - A * xs[i] - B * ys[i]) != 0 or \
-           sympy.simplify(ys[i + 1] - C * xs[i] - D * ys[i]) != 0:
+        if not is_zero(xs[i + 1] - A * xs[i] - B * ys[i]) or \
+           not is_zero(ys[i + 1] - C * xs[i] - D * ys[i]):
             return
     ok = sum(1 for i in range(k - 1, len(xs) - 1)
-             if sympy.simplify(xs[i + 1] - A * xs[i] - B * ys[i]) == 0
-             and sympy.simplify(ys[i + 1] - C * xs[i] - D * ys[i]) == 0)
-    det = sympy.simplify(A * D - B * C)
-    kind = "회전" if sympy.simplify(det - 1) == 0 and sympy.simplify(A - D) == 0 else "일차변환"
+             if is_zero(xs[i + 1] - A * xs[i] - B * ys[i])
+             and is_zero(ys[i + 1] - C * xs[i] - D * ys[i]))
+    det = tidy(A * D - B * C)
+    kind = "회전" if is_zero(det - 1) and is_zero(A - D) else "일차변환"
     ang = ""
     if kind == "회전":
         try:
@@ -258,8 +260,7 @@ def _collinear(rep, xs, ys):
     x0, y0 = xs[0], ys[0]
     x1, y1 = xs[1], ys[1]
     for i in range(2, len(xs)):
-        cross = sympy.simplify((x1 - x0) * (ys[i] - y0) - (y1 - y0) * (xs[i] - x0))
-        if cross != 0:
+        if not is_zero((x1 - x0) * (ys[i] - y0) - (y1 - y0) * (xs[i] - x0)):
             return
     rep.add(fact("본 점들이 모두 한 직선 위에 있습니다", weight=80,
                  derivation="세 점의 외적을 정확히 계산해 모두 0 임을 확인했습니다."))

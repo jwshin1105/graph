@@ -145,12 +145,9 @@ def _denominator(coeffs):
 
 
 def _zero_at(expr, p):
+    from .exactness import is_zero
     try:
-        v = expr.subs({X: p[0], Y: p[1]})
-        v = sympy.simplify(sympy.expand_trig(sympy.expand(v)))
-        if v == 0:
-            return True
-        return abs(complex(sympy.N(v, 30))) < 1e-25
+        return is_zero(expr.subs({X: p[0], Y: p[1]}))
     except Exception:
         return False
 

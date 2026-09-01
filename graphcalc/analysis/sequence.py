@@ -13,6 +13,7 @@ from ..core.display import pretty
 from ..core.symbols import sym
 
 _N = sym("n")
+from .exactness import all_same, is_zero, light, same
 from .finding import Report, fact, guess
 
 MAX_DIFF_LEVEL = 6
@@ -25,7 +26,7 @@ def _S(v):
 def differences(values, level=1):
     out = list(values)
     for _ in range(level):
-        out = [sympy.simplify(out[i + 1] - out[i]) for i in range(len(out) - 1)]
+        out = [light(out[i + 1] - out[i]) for i in range(len(out) - 1)]
     return out
 
 
@@ -34,11 +35,11 @@ def difference_table(values, max_level=MAX_DIFF_LEVEL):
     rows = []
     cur = list(values)
     for lv in range(1, min(max_level, len(values) - 1) + 1):
-        cur = [sympy.simplify(cur[i + 1] - cur[i]) for i in range(len(cur) - 1)]
+        cur = [light(cur[i + 1] - cur[i]) for i in range(len(cur) - 1)]
         if not cur:
             break
         rows.append((lv, cur))
-        if all(v == 0 for v in cur):
+        if all(is_zero(v) for v in cur):
             break
     return rows
 
@@ -46,7 +47,7 @@ def difference_table(values, max_level=MAX_DIFF_LEVEL):
 def constant_level(table):
     """몇 차 차분이 일정해지는가. 없으면 None."""
     for lv, row in table:
-        if len(row) >= 2 and len(set(map(sympy.srepr, row))) == 1:
+        if len(row) >= 2 and all_same(row):
             return lv, row[0]
     return None
 
@@ -96,14 +97,14 @@ def _basics(rep, ns, vs):
     rep.add(fact(f"항 {len(vs)}개를 보았습니다 (n = {ns[0]}‥{ns[-1]})",
                  detail=", ".join(pretty(v) for v in vs[:8]) + (" …" if len(vs) > 8 else ""),
                  derivation="정의에 번호를 넣어 정확한 값으로 계산했습니다.", weight=90))
-    d = [sympy.simplify(vs[i + 1] - vs[i]) for i in range(len(vs) - 1)]
+    d = [light(vs[i + 1] - vs[i]) for i in range(len(vs) - 1)]
     if all(x.is_positive for x in d if x.is_number):
         rep.add(fact("본 항까지는 계속 커집니다 (증가)", weight=80,
                      derivation="이웃한 항의 차가 모두 양수입니다."))
     elif all(x.is_negative for x in d if x.is_number):
         rep.add(fact("본 항까지는 계속 작아집니다 (감소)", weight=80,
                      derivation="이웃한 항의 차가 모두 음수입니다."))
-    elif all(x == 0 for x in d):
+    elif all(is_zero(x) for x in d):
         rep.add(fact("본 항이 모두 같습니다 (상수)", weight=80))
     elif len(d) >= 3 and all(x.is_number for x in d) and \
             all(d[i] * d[i + 1] < 0 for i in range(len(d) - 1)):
@@ -120,7 +121,7 @@ def _basics(rep, ns, vs):
 def _ratios(rep, ns, vs):
     if any(v == 0 for v in vs[:-1]):
         return
-    r = [sympy.simplify(vs[i + 1] / vs[i]) for i in range(len(vs) - 1)]
+    r = [light(vs[i + 1] / vs[i]) for i in range(len(vs) - 1)]
     rep.tables.append(("이웃한 항의 비", [f"a{n+1}/a{n}" for n in ns[:-1]],
                        [[pretty(x) for x in r]]))
 
@@ -132,7 +133,7 @@ def _verify(rule_fn, hold_n, hold_v):
     ok = 0
     for n, v in zip(hold_n, hold_v):
         try:
-            if sympy.simplify(rule_fn(n) - v) == 0:
+            if is_zero(rule_fn(n) - v):
                 ok += 1
         except Exception:
             pass
@@ -142,8 +143,8 @@ def _verify(rule_fn, hold_n, hold_v):
 def _arithmetic(rep, fn, fv, hn, hv):
     if len(fv) < 3:
         return
-    d = sympy.simplify(fv[1] - fv[0])
-    if any(sympy.simplify(fv[i + 1] - fv[i] - d) != 0 for i in range(len(fv) - 1)):
+    d = light(fv[1] - fv[0])
+    if any(not is_zero(fv[i + 1] - fv[i] - d) for i in range(len(fv) - 1)):
         return
     a0, n0 = fv[0], fn[0]
     rule = lambda n: a0 + d * (n - n0)
@@ -158,8 +159,8 @@ def _arithmetic(rep, fn, fv, hn, hv):
 def _geometric(rep, fn, fv, hn, hv):
     if len(fv) < 3 or any(v == 0 for v in fv):
         return
-    r = sympy.simplify(fv[1] / fv[0])
-    if any(sympy.simplify(fv[i + 1] / fv[i] - r) != 0 for i in range(len(fv) - 1)):
+    r = light(fv[1] / fv[0])
+    if any(not is_zero(fv[i + 1] / fv[i] - r) for i in range(len(fv) - 1)):
         return
     a0, n0 = fv[0], fn[0]
     rule = lambda n: a0 * r ** (n - n0)
@@ -199,11 +200,11 @@ def _exponential(rep, fn, fv, hn, hv):
     """aₙ = A·rⁿ 꼴 — 비가 일정하지는 않아도 성장이 지수인가."""
     if len(fv) < 4 or any(v <= 0 for v in fv if v.is_number):
         return
-    r = sympy.simplify(fv[-1] / fv[-2])
+    r = light(fv[-1] / fv[-2])
     if r == 1 or not r.is_number:
         return
-    ratios = [sympy.simplify(fv[i + 1] / fv[i]) for i in range(len(fv) - 1)]
-    if len(set(map(sympy.srepr, ratios))) == 1:
+    ratios = [light(fv[i + 1] / fv[i]) for i in range(len(fv) - 1)]
+    if all_same(ratios):
         return                        # 등비로 이미 적었다
     ok = all(abs(float(x) - float(r)) < 1e-9 for x in ratios if x.is_number)
     if not ok:
@@ -221,7 +222,7 @@ def _exponential(rep, fn, fv, hn, hv):
 def _periodic(rep, ns, vs):
     m = len(vs)
     for T in range(1, m // 2 + 1):
-        if all(sympy.simplify(vs[i] - vs[i + T]) == 0 for i in range(m - T)):
+        if all(is_zero(vs[i] - vs[i + T]) for i in range(m - T)):
             rep.add(fact(f"본 항 안에서 주기 {T} 로 되풀이됩니다",
                          detail=" , ".join(pretty(v) for v in vs[:T]), weight=85,
                          derivation=f"a(n+{T}) − a(n) 이 본 항 모두에서 0 이었습니다."))
@@ -244,12 +245,12 @@ def _recurrence(rep, fn, fv, hn, hv):
         if sol:
             P, Q = sol[0].get(p), sol[0].get(q)
             if P is not None and Q is not None and \
-               all(sympy.simplify(fv[i + 1] - P * fv[i] - Q) == 0 for i in range(len(fv) - 1)):
+               all(is_zero(fv[i + 1] - P * fv[i] - Q) for i in range(len(fv) - 1)):
                 if not (P == 1 and Q == 0):
                     ok = sum(1 for i in range(len(hv))
-                             if sympy.simplify(hv[i] - P * (hv[i - 1] if i else fv[-1]) - Q) == 0)
+                             if is_zero(hv[i] - P * (hv[i - 1] if i else fv[-1]) - Q))
                     A = sympy.Function("a")
-                    rep.add(guess(f"점화식 — a_(n+1) = {pretty(P * A(n) + Q)}",
+                    rep.add(guess(f"점화식 — aₙ₊₁ = {pretty(P * A(n) + Q)}",
                                   used=len(fv), checked=len(hv), passed=ok, weight=88,
                                   derivation="앞의 두 항으로 p, q 를 정확히 풀고, 나머지 항에서 "
                                              "그 식이 성립하는지 확인했습니다."))
@@ -265,13 +266,13 @@ def _recurrence(rep, fn, fv, hn, hv):
             if P is not None and Q is not None:
                 P, Q = _tidy(P), _tidy(Q)
             if P is not None and Q is not None and \
-               all(sympy.simplify(fv[i + 2] - P * fv[i + 1] - Q * fv[i]) == 0
+               all(is_zero(fv[i + 2] - P * fv[i + 1] - Q * fv[i])
                    for i in range(len(fv) - 2)):
                 seq_all = fv + hv
                 ok = sum(1 for i in range(len(fv) - 2, len(seq_all) - 2)
-                         if sympy.simplify(seq_all[i + 2] - P * seq_all[i + 1] - Q * seq_all[i]) == 0)
+                         if is_zero(seq_all[i + 2] - P * seq_all[i + 1] - Q * seq_all[i]))
                 A = sympy.Function("a")
-                rep.add(guess(f"점화식 — a_(n+2) = {pretty(P * A(n + 1) + Q * A(n))}",
+                rep.add(guess(f"점화식 — aₙ₊₂ = {pretty(P * A(n + 1) + Q * A(n))}",
                               used=len(fv), checked=max(0, len(hv)), passed=ok, weight=88,
                               derivation="앞의 세 항으로 p, q 를 정확히 풀고, 나머지 항에서 "
                                          "그 식이 성립하는지 확인했습니다."))
