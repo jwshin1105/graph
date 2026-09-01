@@ -69,10 +69,10 @@ class Row(QWidget):
     def set_color(self, c):
         self.swatch.setStyleSheet(f"background:{c}; border-radius:3px;")
 
-    def set_kind(self, t, err=""):
+    def set_kind(self, t, err="", note=""):
         self.kind.setText(t)
         self.edit.setStyleSheet("color:#a02b2b;" if err else "")
-        self.edit.setToolTip(err)
+        self.edit.setToolTip(err or note)
 
 
 class Worker(QObject):
@@ -229,6 +229,7 @@ class Window(QMainWindow):
         r.selected.connect(self._row_selected)
         self.rows.append(r)
         self.list_lay.insertWidget(self.list_lay.count() - 1, r)
+        r.edit.setCursorPosition(0)          # 긴 식도 앞에서부터 보이게
         if not text:
             r.edit.setFocus()
         return r
@@ -277,11 +278,12 @@ class Window(QMainWindow):
                 continue
             row.set_color(obj.color)
             row.set_kind(obj.kind_text())
-            if not row.show_box.isChecked():
+            if not row.show_box.isChecked() or not obj.visible:
                 continue
             d = draw(obj, view, self.canvas.width(), self.canvas.height())
             if d.message:
-                row.set_kind(obj.kind_text(), d.message)
+                # 못 그린 것이 아니라 알려 주는 말은 빨갛게 적지 않는다
+                row.set_kind(obj.kind_text(), note=d.message)
             drawings.append(d)
         self.canvas.set_drawings(drawings)
         self._fill_picker()
