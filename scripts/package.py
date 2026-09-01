@@ -173,7 +173,7 @@ def windows() -> list[Path]:
                 iscc = guess
                 break
     if not iscc:
-        print("Inno Setup 을 찾지 못했습니다. 폴더째 쓰는 판만 만듭니다.")
+        print("Inno Setup 을 찾지 못했습니다. 풀어서 바로 쓰는 판만 만듭니다.")
         return [zip_folder()]
     OUT.mkdir(parents=True, exist_ok=True)
     run([iscc, str(ROOT / "packaging" / "windows" / "graphcalc.iss")])

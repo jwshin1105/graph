@@ -25,11 +25,13 @@ UninstallDisplayName={#AppName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesInstallIn64BitMode=x64compatible
-ArchitecturesAllowed=x64compatible
+; x64compatible 은 Inno Setup 6.3 부터다. 어느 판에서 빌드하든 돌게 x64 를 쓴다.
+ArchitecturesInstallIn64BitMode=x64
+ArchitecturesAllowed=x64
 
 [Languages]
-Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
+; Inno Setup 6 에 한국어 언어 파일은 기본으로 들어 있지 않다. 설치 창은 영어지만
+; 앱 이름과 프로그램 자체는 한국어다.
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]

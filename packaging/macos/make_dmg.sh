@@ -7,7 +7,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 APP="$ROOT/build/dist/수학 탐구 계산기.app"
 OUT="$ROOT/build/installer"
 VERSION="${VERSION:-1.0.0}"
-DMG="$OUT/수학탐구계산기-$VERSION.dmg"
+# 애플 실리콘과 인텔은 서로 다른 파일이다. 이름이 같으면 한쪽이 다른 쪽을 덮는다.
+ARCH=$(uname -m)
+DMG="$OUT/수학탐구계산기-$VERSION-macos-$ARCH.dmg"
 
 [ -d "$APP" ] || { echo "앱을 찾지 못했습니다: $APP" >&2; exit 1; }
 mkdir -p "$OUT"
