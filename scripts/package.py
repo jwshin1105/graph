@@ -84,7 +84,8 @@ def smoke() -> None:
     report.unlink(missing_ok=True)
     try:
         r = subprocess.run([str(exe), f"--smoke-out={report}"],
-                           capture_output=True, text=True, timeout=240, env=env)
+                           capture_output=True, text=True, timeout=240, env=env,
+                           encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         raise SystemExit("묶은 앱이 240초 안에 끝나지 않았습니다. 창이 뜨다 막힌 듯합니다.")
 
