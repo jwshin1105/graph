@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
@@ -765,6 +766,9 @@ def main(argv: list[str] | None = None) -> int:
     shot = _arg(argv, "--screenshot=")
     out = _arg(argv, "--smoke-out=")
     app = QApplication([a for a in argv if not a.startswith("--")])
+    # 어디까지 갔는지 바로 적어 둔다. 뒤에서 막히더라도 "뜨기는 했다" 는 것은
+    # 남으므로, 아예 뜨지 못한 것과 뜨다 막힌 것을 가릴 수 있다.
+    _write(out, "창을 만들기 시작했습니다.")
     app.setStyle("Fusion")
     app.setApplicationName("수학 탐구 계산기")
     app.setApplicationDisplayName("수학 탐구 계산기")
@@ -800,11 +804,25 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 _write(out, state["report"])
                 print(state["report"])
+                # 분석 갈래가 셈을 하고 있으면 app.quit() 만으로는 프로세스가
+                # 끝나지 않는다. 창을 닫아 갈래를 먼저 재운다.
+                try:
+                    w.close()
+                except Exception:
+                    pass
                 app.quit()
 
         QTimer.singleShot(6000, finish)
         app.exec()
-        return 1 if state["bad"] else 0
+        code = 1 if state["bad"] else 0
+        # 그래도 남아 있는 갈래가 있으면 파이썬은 그것을 기다리다 멈춘다.
+        # 확인은 이미 끝났으니 여기서 끊는다 (윈도우에서 실제로 여기 걸렸다).
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass
+        os._exit(code)
     return app.exec()
 
 

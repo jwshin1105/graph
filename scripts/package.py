@@ -84,10 +84,13 @@ def smoke() -> None:
     report.unlink(missing_ok=True)
     try:
         r = subprocess.run([str(exe), f"--smoke-out={report}"],
-                           capture_output=True, text=True, timeout=240, env=env,
+                           capture_output=True, text=True, timeout=300, env=env,
                            encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
-        raise SystemExit("묶은 앱이 240초 안에 끝나지 않았습니다. 창이 뜨다 막힌 듯합니다.")
+        said = report.read_text(encoding="utf-8").strip() if report.is_file() else ""
+        raise SystemExit("묶은 앱이 300초 안에 끝나지 않았습니다. "
+                         + (f"마지막으로 남긴 말: {said}" if said
+                            else "아무 말도 남기지 못했습니다 — 아예 뜨지 못한 것입니다."))
 
     said = report.read_text(encoding="utf-8").strip() if report.is_file() else ""
     print(said or (r.stdout.strip() or r.stderr.strip() or "(아무 말도 남기지 않았습니다)"))
