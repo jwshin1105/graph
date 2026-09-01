@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=수학 탐구 계산기
+Name[en]=Math Explorer
+GenericName=수학 계산기
+Comment=정확한 계산, 적응형 그래프, 규칙성 탐색
+Comment[en]=Exact computation, adaptive graphing, pattern discovery
+Exec=graphcalc
+Icon=graphcalc
+Terminal=false
+Categories=Education;Science;Math;
+Keywords=수학;계산기;그래프;수열;점열;math;calculator;graph;sequence;
+StartupWMClass=graphcalc

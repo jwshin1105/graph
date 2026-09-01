@@ -3,10 +3,45 @@
 식을 계산해 주는 프로그램이 아니라, **수학적 대상을 정확하게 계산하고, 시각화하고,
 그 안의 구조와 규칙성을 탐색하는** 파이썬 데스크톱 앱입니다.
 
+## 설치
+
+파이썬을 따로 깔 필요 없습니다. 필요한 것은 모두 안에 들어 있습니다.
+
+| 운영체제 | 받을 것 | 여는 법 |
+| --- | --- | --- |
+| 윈도우 | `수학탐구계산기-1.0.0-설치.exe` | 두 번 눌러 설치. 관리자 권한이 필요 없습니다. |
+| 윈도우 (설치 없이) | `…-windows-x64-portable.zip` | 풀어서 `graphcalc.exe` |
+| 맥 | `수학탐구계산기-1.0.0.dmg` | 앱을 Applications 로 끌어다 놓기 |
+| 데비안·우분투 | `graphcalc_1.0.0_amd64.deb` | `sudo apt install ./graphcalc_1.0.0_amd64.deb` |
+| 그 밖의 리눅스 | `…-linux-x86_64.tar.gz` | 풀고 `./install.sh` (홈에 설치, 권한 불필요) |
+
+설치본은 [Actions](../../actions/workflows/build.yml) 의 최근 실행에 붙어 있고,
+판이 매겨진 것은 [Releases](../../releases) 에 있습니다.
+
+맥에서 처음 열 때 "확인되지 않은 개발자" 라고 나오면 앱을 오른쪽 클릭 → **열기**
+를 고르세요. 애플 개발자 인증서로 서명하지 않았기 때문이고, 한 번만 그렇게 하면 됩니다.
+
+## 소스에서 실행하기
+
 ```bash
 pip install -r requirements.txt
 python -m graphcalc
 ```
+
+## 설치본 직접 만들기
+
+```bash
+pip install -r requirements.txt pyinstaller
+python scripts/package.py       # 지금 이 운영체제용으로 만든다
+```
+
+아이콘을 만들고, 하나로 묶고, **묶은 것을 실제로 띄워 본 다음**, 그 운영체제의
+설치 파일을 만듭니다. 묶는 데 성공한 것과 실행되는 것은 다른 이야기라
+`--smoke` 검사를 반드시 거칩니다 — 안 쓰는 모듈을 덜어 냈다가 scipy 가 조용히
+깨진 적이 실제로 있었고, 그걸 잡아낸 것이 이 검사입니다.
+
+세 운영체제의 설치본은 각각 그 운영체제에서 만들어야 합니다(파이썬을 통째로 넣기
+때문입니다). `.github/workflows/build.yml` 이 밀어 넣을 때마다 셋을 함께 만듭니다.
 
 ---
 
@@ -368,13 +403,18 @@ graphcalc/
   objects/   model  sequence  pointseq
   engine/    implicit  curves  region  lattice
   analysis/  finding  exactness  sequence  pointset  invariant  function  report
-  ui/        app  canvas  panel  plotting
-tests/       72개
+  ui/        theme  app  canvas  panel  plotting
+  resources  곁딸린 파일 찾기 (소스로 돌 때와 설치본일 때가 다르다)
+assets/      fonts  icons  icon.svg
+packaging/   graphcalc.spec  entry.py  linux/  windows/  macos/
+scripts/     make_icons.py  package.py
+design/      Claude Design 원본 (색·간격·타이포의 출처)
+tests/       74개
 legacy-web/  예전 브라우저 판 (참고용)
 ```
 
 ```bash
-python -m pytest tests -q          # 72 passed
+python -m pytest tests -q          # 74 passed
 ```
 
 시험은 "돌아간다" 가 아니라 **"얼마나 정확한가"** 를 잽니다. 원의 둘레를 재고,

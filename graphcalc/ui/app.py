@@ -749,8 +749,13 @@ class Window(QMainWindow):
         super().closeEvent(e)
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv if argv is None else argv
+    # 설치본이 제대로 묶였는지 확인하는 길 — 창을 띄웠다가 스스로 닫고,
+    # 원하면 그림도 한 장 남긴다. 사람이 눌러 보지 않아도 빌드를 검사할 수 있다.
+    smoke = "--smoke" in argv
+    shot = next((a.split("=", 1)[1] for a in argv if a.startswith("--screenshot=")), "")
+    app = QApplication([a for a in argv if not a.startswith("--")])
     app.setStyle("Fusion")
     app.setApplicationName("수학 탐구 계산기")
     app.setApplicationDisplayName("수학 탐구 계산기")
@@ -761,6 +766,22 @@ def main() -> int:
     set_theme("light")
     w = Window()
     w.show()
+    if smoke or shot:
+        def finish():
+            if shot:
+                w.grab().save(shot)
+            print(f"수학 탐구 계산기 — 식 {len(w.rows)}줄, 그린 것 "
+                  f"{len(w.canvas.drawings)}개")
+            bad = 0
+            for row, d in zip(w.rows, w.canvas.drawings):
+                pieces = sum(len(x) for x in d.paths) + len(d.points)
+                mark = "·" if pieces or d.region is not None else "✗"
+                bad += mark == "✗"
+                print(f"  {mark} {row.edit.text():34s} {row.kind.text():22s}"
+                      f" 점·마디 {pieces}{'  ' + d.message if d.message else ''}")
+            print("잘 뜹니다." if not bad else f"{bad}줄이 그려지지 않았습니다.")
+            app.quit()
+        QTimer.singleShot(6000, finish)
     return app.exec()
 
 
