@@ -39,15 +39,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            label: 리눅스
           - os: windows-latest
             label: 윈도우
-          - os: macos-14
-            label: 맥 (애플 실리콘)
-          - os: macos-13
-            label: 맥 (인텔)
+          - os: ubuntu-22.04
+            label: 리눅스
     runs-on: ${{ matrix.os }}
+    # 맥은 지금 만들지 않는다. packaging/macos 의 스크립트는 그대로 두었으니
+    # 필요해지면 matrix 에 macos-14 · macos-13 을 도로 넣으면 된다.
+    # (--smoke 가 240초 안에 끝나지 않아 아직 못 미덥다.)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,6 +73,8 @@ jobs:
       - name: 꾸리기
         env:
           QT_QPA_PLATFORM: offscreen
+          PYTHONUTF8: "1"          # 윈도우 콘솔이 cp1252 라 한글에서 넘어진다
+          PYTHONIOENCODING: utf-8
         run: python scripts/package.py
 
       - uses: actions/upload-artifact@v4

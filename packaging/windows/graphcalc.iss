@@ -1,4 +1,4 @@
-; 윈도우 설치 프로그램 — Inno Setup 6
+﻿; 윈도우 설치 프로그램 — Inno Setup 6
 ; 빌드: iscc packaging\windows\graphcalc.iss (PyInstaller 로 dist 를 만든 뒤)
 
 #define AppName "수학 탐구 계산기"

@@ -27,8 +27,8 @@ from ..resources import asset, exists
 from .canvas import GraphCanvas
 from .panel import to_html
 from .plotting import draw
-from .theme import (load_fonts, math_font, mono_font, qss, set_theme, theme,
-                    toggle_theme, ui_font)
+from .theme import (load_fonts, math_font, mono_font, qss, set_theme, symbol_font,
+                    theme, toggle_theme, ui_font)
 
 START = [
     "y = x^2 - 3",
@@ -63,7 +63,7 @@ def icon_button(glyph: str, tip: str, size: int = 40, px: int = 16) -> QPushButt
     b.setToolTip(tip)
     b.setFixedSize(size, size)
     b.setCursor(Qt.PointingHandCursor)
-    f = b.font()
+    f = symbol_font()          # 시스템 글꼴에 없는 기호는 함께 넣은 글꼴이 그린다
     f.setPixelSize(px)
     b.setFont(f)
     return b
@@ -173,7 +173,7 @@ class Row(QWidget):
 # ─────────────────────────────────────────────────────────────── 스테퍼
 
 class Stepper(QWidget):
-    """− 값 ＋ — 디자인의 알약 모양 조절기."""
+    """− 값 + — 디자인의 알약 모양 조절기."""
     changed = Signal(float)
 
     def __init__(self, value: float, lo: float, hi: float, step: float,
@@ -188,7 +188,7 @@ class Stepper(QWidget):
         inner.setSpacing(2)
         self.minus = icon_button("−", "줄이기", 26, 14)
         self.minus.setObjectName("stepper")
-        self.plus = icon_button("＋", "늘리기", 26, 13)
+        self.plus = icon_button("+", "늘리기", 26, 15)
         self.plus.setObjectName("stepper")
         self.text = QLabel(fmt.format(value))
         self.text.setAlignment(Qt.AlignCenter)
@@ -330,7 +330,7 @@ class Window(QMainWindow):
         head.addWidget(self._section("식"))
         head.addWidget(self.lbl_count)
         head.addStretch(1)
-        self.btn_add = icon_button("＋", "식 더하기", 30, 15)
+        self.btn_add = icon_button("+", "식 더하기", 30, 17)
         self.btn_add.clicked.connect(lambda: self.add_row(""))
         head.addWidget(self.btn_add)
         lv.addLayout(head)
@@ -425,7 +425,7 @@ class Window(QMainWindow):
         zl = QVBoxLayout(self.zoom_pill)
         zl.setContentsMargins(6, 6, 6, 6)
         zl.setSpacing(2)
-        self.btn_in = icon_button("＋", "확대", 40, 17)
+        self.btn_in = icon_button("+", "확대", 40, 19)
         self.btn_out = icon_button("−", "축소", 40, 17)
         self.sep = QFrame()
         self.sep.setFixedHeight(1)
@@ -749,12 +749,21 @@ class Window(QMainWindow):
         super().closeEvent(e)
 
 
+def _arg(argv: list[str], flag: str) -> str:
+    return next((a.split("=", 1)[1] for a in argv if a.startswith(flag)), "")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
     # 설치본이 제대로 묶였는지 확인하는 길 — 창을 띄웠다가 스스로 닫고,
     # 원하면 그림도 한 장 남긴다. 사람이 눌러 보지 않아도 빌드를 검사할 수 있다.
-    smoke = "--smoke" in argv
-    shot = next((a.split("=", 1)[1] for a in argv if a.startswith("--screenshot=")), "")
+    #
+    # 윈도우에서 창만 있는 실행 파일은 stdout 이 아예 없다(print 가 소리 없이
+    # 사라진다). 그러면 "확인했다" 는 말만 남고 실제로는 아무것도 확인하지 못한다.
+    # 그래서 --smoke-out 으로 **파일에** 적는다.
+    smoke = "--smoke" in argv or "--smoke-out=" in " ".join(argv)
+    shot = _arg(argv, "--screenshot=")
+    out = _arg(argv, "--smoke-out=")
     app = QApplication([a for a in argv if not a.startswith("--")])
     app.setStyle("Fusion")
     app.setApplicationName("수학 탐구 계산기")
@@ -767,22 +776,46 @@ def main(argv: list[str] | None = None) -> int:
     w = Window()
     w.show()
     if smoke or shot:
+        state = {"bad": 1, "report": "아직 확인하지 못했습니다."}
+
         def finish():
-            if shot:
-                w.grab().save(shot)
-            print(f"수학 탐구 계산기 — 식 {len(w.rows)}줄, 그린 것 "
-                  f"{len(w.canvas.drawings)}개")
-            bad = 0
-            for row, d in zip(w.rows, w.canvas.drawings):
-                pieces = sum(len(x) for x in d.paths) + len(d.points)
-                mark = "·" if pieces or d.region is not None else "✗"
-                bad += mark == "✗"
-                print(f"  {mark} {row.edit.text():34s} {row.kind.text():22s}"
-                      f" 점·마디 {pieces}{'  ' + d.message if d.message else ''}")
-            print("잘 뜹니다." if not bad else f"{bad}줄이 그려지지 않았습니다.")
-            app.quit()
+            try:
+                if shot:
+                    w.grab().save(shot)
+                lines = [f"수학 탐구 계산기 — 식 {len(w.rows)}줄, "
+                         f"그린 것 {len(w.canvas.drawings)}개"]
+                bad = 0
+                for row, d in zip(w.rows, w.canvas.drawings):
+                    pieces = sum(len(x) for x in d.paths) + len(d.points)
+                    ok = pieces or d.region is not None
+                    bad += not ok
+                    note = f"  {d.message}" if d.message else ""
+                    lines.append(f"  {'·' if ok else '✗'} {row.edit.text():34s}"
+                                 f" {row.kind.text():22s} 점·마디 {pieces}{note}")
+                lines.append("잘 뜹니다." if not bad
+                             else f"{bad}줄이 그려지지 않았습니다.")
+                state["bad"], state["report"] = bad, "\n".join(lines)
+            except Exception as exc:                # 확인하다 넘어져도 조용히 넘기지 않는다
+                state["bad"], state["report"] = 1, f"확인하다 막혔습니다: {exc!r}"
+            finally:
+                _write(out, state["report"])
+                print(state["report"])
+                app.quit()
+
         QTimer.singleShot(6000, finish)
+        app.exec()
+        return 1 if state["bad"] else 0
     return app.exec()
+
+
+def _write(path: str, text: str) -> None:
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

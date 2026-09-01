@@ -20,6 +20,14 @@ import sys
 import tarfile
 from pathlib import Path
 
+# 윈도우의 파이썬은 콘솔 인코딩을 cp1252 로 잡는다. 그대로 두면 한글은 물론
+# ── 하나에도 UnicodeEncodeError 로 빌드가 통째로 멈춘다(실제로 멈췄다).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 DIST = BUILD / "dist"
@@ -53,7 +61,12 @@ def freeze() -> None:
 
 
 def smoke() -> None:
-    """묶은 것을 실제로 띄워 본다. 여기서 걸러 내지 못하면 사용자가 걸린다."""
+    """묶은 것을 실제로 띄워 본다. 여기서 걸러 내지 못하면 사용자가 걸린다.
+
+    윈도우에서 창만 있는 실행 파일은 stdout 이 없다. print 가 소리 없이 사라지므로
+    출력만 보고 판단하면 **아무것도 확인하지 않고 통과**한다. 그래서 앱이 파일에
+    적게 하고, 그 파일이 있는지·무슨 말이 적혔는지를 본다.
+    """
     step("실행해 보기")
     if sys.platform == "darwin":
         exe = DIST / "수학 탐구 계산기.app" / "Contents" / "MacOS" / NAME
@@ -63,13 +76,23 @@ def smoke() -> None:
         exe = DIST / NAME / NAME
     if not exe.is_file():
         raise SystemExit(f"실행 파일을 찾지 못했습니다: {exe}")
+
     env = dict(os.environ)
-    if sys.platform.startswith("linux") and not env.get("DISPLAY"):
-        env["QT_QPA_PLATFORM"] = "offscreen"
-    r = subprocess.run([str(exe), "--smoke"], capture_output=True, text=True,
-                       timeout=180, env=env)
-    print(r.stdout.strip() or r.stderr.strip())
-    if r.returncode != 0 or "그려지지 않았습니다" in r.stdout:
+    if not env.get("DISPLAY") and sys.platform != "darwin":
+        env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    report = BUILD / "smoke.txt"
+    report.unlink(missing_ok=True)
+    try:
+        r = subprocess.run([str(exe), f"--smoke-out={report}"],
+                           capture_output=True, text=True, timeout=240, env=env)
+    except subprocess.TimeoutExpired:
+        raise SystemExit("묶은 앱이 240초 안에 끝나지 않았습니다. 창이 뜨다 막힌 듯합니다.")
+
+    said = report.read_text(encoding="utf-8").strip() if report.is_file() else ""
+    print(said or (r.stdout.strip() or r.stderr.strip() or "(아무 말도 남기지 않았습니다)"))
+    if not said:
+        raise SystemExit("앱이 확인 결과를 남기지 않았습니다. 아예 뜨지 못한 것입니다.")
+    if r.returncode != 0 or "그려지지 않았습니다" in said or "막혔습니다" in said:
         raise SystemExit("묶은 앱이 제대로 돌지 않습니다. 위 줄을 보세요.")
 
 

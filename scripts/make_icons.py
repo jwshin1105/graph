@@ -14,6 +14,12 @@ import struct
 import sys
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):   # 윈도우 콘솔은 cp1252 라 한글에서 넘어진다
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from PySide6.QtCore import QBuffer, QByteArray, QRectF, Qt
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QGuiApplication, QImage,
                            QPainter, QPainterPath)
@@ -77,22 +83,47 @@ def png_bytes(img: QImage) -> bytes:
     return bytes(buf.data())
 
 
-def build_ico(pngs: dict[int, bytes], path: Path) -> None:
-    """PNG 를 담는 ico 컨테이너 (Vista 이후 형식).
+def dib_bytes(img: QImage) -> bytes:
+    """아이콘용 DIB (BITMAPINFOHEADER + BGRA + AND 마스크).
+
+    ico 안에 PNG 를 넣는 것은 비스타부터 되지만, 작은 크기까지 PNG 로 채우면
+    탐색기나 작업 표시줄이 판에 따라 빈 칸을 보여 준다. 그래서 48 px 이하는
+    옛날부터 쓰던 DIB 로 넣는다 — 어디서나 확실하다.
+    """
+    img = img.convertToFormat(QImage.Format_ARGB32)
+    w, h = img.width(), img.height()
+    head = struct.pack("<IiiHHIIiiII", 40, w, h * 2, 1, 32, 0, w * h * 4,
+                       0, 0, 0, 0)
+    rows = []
+    for y in range(h - 1, -1, -1):          # DIB 는 아래에서 위로 쌓는다
+        line = bytearray()
+        for x in range(w):
+            c = img.pixel(x, y)             # 0xAARRGGBB
+            line += bytes(((c) & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF,
+                           (c >> 24) & 0xFF))   # B G R A
+        rows.append(bytes(line))
+    xor = b"".join(rows)
+    # 32비트 아이콘은 알파를 쓰므로 AND 마스크는 전부 0(불투명)으로 둔다
+    stride = ((w + 31) // 32) * 4
+    return head + xor + b"\x00" * (stride * h)
+
+
+def build_ico(entries: dict[int, tuple[bool, bytes]], path: Path) -> None:
+    """ico 컨테이너. 크기마다 DIB 인지 PNG 인지 함께 받는다.
 
     Pillow 에 맡기면 가장 작은 판을 늘려 채우기 때문에 크기마다 따로 그린 그림이
     버려진다. 그래서 손으로 쓴다.
     """
-    n = len(pngs)
+    n = len(entries)
     offset = 6 + 16 * n
-    entries, body = b"", b""
-    for size in sorted(pngs):
-        data = pngs[size]
-        entries += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0,
-                               1, 32, len(data), offset)
+    head, body = b"", b""
+    for size in sorted(entries):
+        _is_png, data = entries[size]
+        head += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0,
+                            1, 32, len(data), offset)
         body += data
         offset += len(data)
-    path.write_bytes(struct.pack("<HHH", 0, 1, n) + entries + body)
+    path.write_bytes(struct.pack("<HHH", 0, 1, n) + head + body)
 
 
 def build_icns(pngs: dict[int, bytes], path: Path) -> None:
@@ -131,7 +162,9 @@ def main() -> int:
         img.save(str(OUT / f"icon-{s}.png"))
     pngs = {s: png_bytes(img) for s, img in images.items()}
 
-    build_ico({s: pngs[s] for s in ICO_SIZES}, OUT / "graphcalc.ico")
+    # 48 px 이하는 DIB, 그보다 크면 PNG — 윈도우가 가장 확실하게 읽는 짜임새
+    build_ico({s: (s > 48, pngs[s] if s > 48 else dib_bytes(images[s]))
+               for s in ICO_SIZES}, OUT / "graphcalc.ico")
     build_icns(pngs, OUT / "graphcalc.icns")
     (OUT / "graphcalc.png").write_bytes(pngs[512])
     build_svg(ROOT / "assets" / "icon.svg", family)

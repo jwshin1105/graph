@@ -185,6 +185,18 @@ def ui_font(size: float = 10, weight=QFont.Normal) -> QFont:
     return f
 
 
+def symbol_font(size: float = 10) -> QFont:
+    """단추에 쓰는 기호 — ⌂ ⤓ ◐ 같은 것.
+
+    맑은 고딕에는 이 가운데 없는 글자가 있어서 그대로 두면 윈도우에서 네모로
+    보인다. 뒤에 함께 넣어 둔 DejaVu Serif 를 이어 두면 없는 글자만 그쪽이 그린다.
+    """
+    f = QFont()
+    f.setFamilies(_UI + ["DejaVu Serif", "Segoe UI Symbol", QFont().defaultFamily()])
+    f.setPointSizeF(size)
+    return f
+
+
 def serif_css() -> str:
     return ", ".join(f"'{n}'" for n in _SERIF)
 
