@@ -16,7 +16,9 @@ from sympy.printing.str import StrPrinter
 from .precision import get_precision, workdps
 
 SUP = str.maketrans("0123456789+-n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿ")
-SUB = str.maketrans("0123456789+-", "₀₁₂₃₄₅₆₇₈₉₊₋")
+SUB = str.maketrans("0123456789+-=()nkmhlpstxaeoijruv",
+                    "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙₖₘₕₗₚₛₜₓₐₑₒᵢⱼᵣᵤᵥ")
+SUBOK = set("0123456789+-=()nkmhlpstxaeoijruv")
 
 
 def _sup(s: str) -> str | None:
@@ -62,6 +64,13 @@ class MathPrinter(StrPrinter):
             return f"({s})"
         return s
 
+    GREEK_NAMES = {"theta": "θ", "alpha": "α", "beta": "β", "gamma": "γ",
+                   "phi": "φ", "lambda": "λ", "mu": "μ", "rho": "ρ", "sigma": "σ",
+                   "omega": "ω", "delta": "δ", "epsilon": "ε", "tau": "τ"}
+
+    def _print_Symbol(self, expr):
+        return self.GREEK_NAMES.get(expr.name, expr.name)
+
     def _print_Rational(self, expr):
         return f"{expr.p}/{expr.q}"
 
@@ -96,10 +105,9 @@ class MathPrinter(StrPrinter):
     def _print_AppliedUndef(self, expr):
         name = expr.func.__name__
         if len(expr.args) == 1:
-            a = self.doprint(expr.args[0])
-            sub = a.translate(SUB) if all(c in "0123456789+-" for c in a) else None
-            if sub is not None:
-                return f"{name}{sub}"
+            a = self.doprint(expr.args[0]).replace(" ", "")
+            if a and all(c in SUBOK for c in a) and len(a) <= 6:
+                return f"{name}{a.translate(SUB)}"
         return f"{name}({', '.join(self.doprint(a) for a in expr.args)})"
 
     def _print_Tuple(self, expr):

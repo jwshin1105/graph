@@ -11,13 +11,14 @@ from dataclasses import dataclass, field
 import sympy
 
 from ..core.domain import Domain
+from ..core.symbols import sym
 
 
 @dataclass
 class Sequence:
     """aₙ. rule 이 있으면 닫힌 식, recurrence 가 있으면 점화식."""
     name: str = "a"
-    index: sympy.Symbol = field(default_factory=lambda: sympy.Symbol("n"))
+    index: sympy.Symbol = field(default_factory=lambda: sym("n"))
     rule: object = None                     # aₙ = f(n)
     recurrence: object = None               # a_{n+k} = … (이동량 shift 만큼 앞의 항으로)
     shift: int = 1

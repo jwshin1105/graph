@@ -18,7 +18,7 @@ from ..core.syntax import Bare, Definition, DomainDecl, ListExpr, Relation, Sett
 from .pointseq import PointSequence
 from .sequence import Sequence
 
-X, Y, T, R, THETA = sympy.symbols("x y t r theta")
+from ..core.symbols import THETA, X, Y, sym
 
 KIND_NAMES = {
     "function": "함수 y = f(x)",
@@ -147,7 +147,7 @@ def _make_sequence(name, group, ctx) -> Sequence:
     어느 쪽이 규칙이고 어느 쪽이 씨앗인지는 **적힌 순서가 아니라 아래첨자의 모양**
     으로 가른다. a_1 = 1 을 뒤에 적었다고 그게 규칙이 되면 안 된다.
     """
-    idx = sympy.Symbol("n")
+    idx = sym("n")
     rule = None
     recurrence = None
     shift = 1
@@ -277,8 +277,8 @@ def _definition(st: Definition, ctx: Context, color) -> MathObject:
         return MathObject(kind="function_x", label=st.text, statement=st, name="x",
                           var=Y, expr=body, color=color,
                           solution=S.Curve(kind="explicit", expr=body, var="y"))
-    if st.name in ("r", "ρ") and body.free_symbols <= {THETA, sympy.Symbol("t")}:
-        v = THETA if THETA in body.free_symbols else sympy.Symbol("t")
+    if st.name in ("r", "ρ") and body.free_symbols <= {THETA, sym("t")}:
+        v = THETA if THETA in body.free_symbols else sym("t")
         return MathObject(kind="polar", label=st.text, statement=st, name="r", var=v,
                           expr=body, color=color,
                           solution=S.Curve(kind="polar", expr=body, var=str(v)))
@@ -337,7 +337,7 @@ def _bare(st: Bare, ctx: Context, color) -> MathObject:
                               color=color, connect=_wants_connect(st),
                               solution=S.PointSet(points=pts))
         pts = [(sympy.Integer(i + 1), v) for i, v in enumerate(items)]
-        seq = Sequence(name="a", index=sympy.Symbol("n"),
+        seq = Sequence(name="a", index=sym("n"),
                        seeds={i + 1: v for i, v in enumerate(items)},
                        domain=Domain("n", sympy.S.Naturals))
         return MathObject(kind="sequence", label=st.text, statement=st, seq=seq,

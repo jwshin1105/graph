@@ -100,7 +100,8 @@ def domain_of(var: str, declared: dict | None = None, *, index_hint: bool = Fals
 def bounds_from_conditions(var: str, conditions) -> tuple:
     """조건들에서 var 의 위·아래 끝을 뽑아낸다. (1 ≤ n ≤ 20 같은 것)"""
     lo = hi = None
-    s = sympy.Symbol(var)
+    from .symbols import sym
+    s = sym(var)
     for c in conditions or ():
         if not isinstance(c, sympy.core.relational.Relational):
             continue

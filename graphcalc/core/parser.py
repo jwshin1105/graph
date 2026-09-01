@@ -16,8 +16,9 @@ import re
 from dataclasses import dataclass
 
 import sympy
-from sympy import Rational, Symbol
+from sympy import Rational
 
+from .symbols import sym
 from .syntax import Bare, Definition, DomainDecl, ListExpr, ParseError, Relation, Setting
 
 # ─────────────────────────────────────────────────────────── 이름표
@@ -312,7 +313,7 @@ class Parser:
             return CONSTS[name]
         if name in FUNCS or name in self.user:
             return self.apply(name)
-        return Symbol(name)
+        return sym(name)
 
     def subscript(self):
         """이름 뒤에 붙은 _n, _{n+1} 을 읽는다. 없으면 None."""
@@ -330,7 +331,7 @@ class Parser:
             return t.value
         if t.kind == "name":
             self.i += 1
-            return Symbol(t.text)
+            return sym(t.text)
         raise ParseError("아래첨자가 있어야 합니다", t.pos)
 
     def apply(self, name: str):
@@ -499,7 +500,7 @@ def parse_one(toks: list[Token], names: set[str] | None):
         lhs = lp.expr()
         rp = Parser(right, names)
         rhs = rp.expr()
-        if isinstance(lhs, Symbol):
+        if isinstance(lhs, sympy.Symbol):
             return DomainDecl(var=lhs.name, domain=rhs)
         return Relation(op="∈", lhs=lhs, rhs=rhs)
 
@@ -547,7 +548,7 @@ def as_definition(left: list[Token], rhs, names) -> Definition | None:
         params = []
         for chunk in split_top(inner, ","):
             if len(chunk) == 1 and chunk[0].kind == "name":
-                params.append(Symbol(chunk[0].text))
+                params.append(sym(chunk[0].text))
             else:
                 return None
         if not params:

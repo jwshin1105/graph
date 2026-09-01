@@ -17,13 +17,14 @@ from dataclasses import dataclass, field
 import sympy
 
 from ..core.domain import Domain
+from ..core.symbols import sym
 
 
 @dataclass
 class PointSequence:
     """Pₙ = (xₙ, yₙ), n ∈ 이산 정의역."""
     name: str = "P"
-    index: sympy.Symbol = field(default_factory=lambda: sympy.Symbol("n"))
+    index: sympy.Symbol = field(default_factory=lambda: sym("n"))
     x_rule: object = None
     y_rule: object = None
     domain: Domain = None
