@@ -138,6 +138,9 @@ def build(statements, ctx: Context | None = None):
             objs.append(_sequence_object(st, seqs[nm], color))
             continue
         objs.append(classify(st, ctx, color))
+    for o, st in zip(objs, statements):
+        if o is not None and isinstance(st, Statement) and "hide" in st.markers:
+            o.visible = False               # 계산은 하되 그리지는 않는다
     return objs
 
 
@@ -188,8 +191,8 @@ def _sequence_object(st, seq: Sequence, color) -> MathObject:
 
 
 def _wants_connect(st) -> bool:
-    t = (st.text or "").lower()
-    return "connect" in t or "연결" in t or "이어" in t
+    """점을 선으로 이을지는 **사용자가 말했을 때만** 참이다."""
+    return "connect" in getattr(st, "markers", ())
 
 
 def classify(st: Statement, ctx: Context, color="#2d70b3") -> MathObject:

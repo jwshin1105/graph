@@ -28,6 +28,7 @@ class Statement:
     text: str = ""                       # 사용자가 적은 그대로
     conditions: list = field(default_factory=list)   # {x > 0} 같은 제한
     domains: dict = field(default_factory=dict)      # {'n': Integers}
+    markers: set = field(default_factory=set)        # connect 처럼 그리는 방식을 말하는 낱말
 
 
 @dataclass

@@ -49,6 +49,11 @@ DOMAINS = {
 
 SETTINGS = {"precision", "digits", "epsilon", "정밀도", "자릿수", "오차"}
 
+# 그리는 방식을 말하는 낱말 — 계산에는 끼어들지 않는다
+MARKERS = {"connect": "connect", "연결": "connect", "이어서": "connect",
+           "line": "connect", "선": "connect",
+           "hide": "hide", "숨김": "hide"}
+
 SUPERS = {"⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5",
           "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "⁺": "+", "⁻": "-"}
 
@@ -445,6 +450,10 @@ def parse(src: str, names: set[str] | None = None):
     stmt = parse_one(main + [Token("end", "", len(text))], names)
     stmt.text = text
     for c in clauses:
+        m = marker_of(c)
+        if m:
+            stmt.markers.add(m)
+            continue
         sub = parse_one(c + [Token("end", "", len(text))], names)
         if isinstance(sub, DomainDecl):
             stmt.domains[sub.var] = sub.domain
@@ -456,11 +465,20 @@ def parse(src: str, names: set[str] | None = None):
 
 
 def is_clause_list(clauses: list[list[Token]]) -> bool:
-    """뒤 절이 전부 조건·정의역인가 (점 (a, b) 와 가르려고)."""
+    """뒤 절이 전부 조건·정의역·표시낱말인가 (점 (a, b) 와 가르려고)."""
     for c in clauses:
+        if marker_of(c):
+            continue
         if not any(t.kind == "op" and t.text in REL_OPS for t in c):
             return False
     return True
+
+
+def marker_of(clause: list[Token]) -> str | None:
+    """절이 connect 같은 표시낱말 하나뿐인가."""
+    if len(clause) == 1 and clause[0].kind == "name":
+        return MARKERS.get(clause[0].text.lower())
+    return None
 
 
 def relation_expr(r: Relation):
