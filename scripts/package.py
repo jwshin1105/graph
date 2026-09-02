@@ -236,8 +236,9 @@ def zip_folder() -> Path:
     """설치하지 않고 풀어서 바로 쓰는 판."""
     OUT.mkdir(parents=True, exist_ok=True)
     base = OUT / f"{KOREAN}-{VERSION}-windows-x64-portable"
-    shutil.make_archive(str(base), "zip", DIST, NAME)
-    return base.with_suffix(".zip")
+    # with_suffix 를 쓰면 안 된다. 이름 안의 1.0.0 에서 마지막 점부터를 확장자로
+    # 보아 "수학탐구계산기-1.0.zip" 이 되어 버린다 (실제로 여기서 넘어졌다).
+    return Path(shutil.make_archive(str(base), "zip", DIST, NAME))
 
 
 def macos() -> list[Path]:
